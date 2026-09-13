@@ -1,0 +1,27 @@
+# Overrides the live stack so every host-mounted runtime source comes from this
+# frozen baseline directory.  The ROS 1 C++ workspace is pinned by image digest.
+services:
+  gazebo:
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:ro
+      - ${FISHBOT_SHARED_DIR:?set FISHBOT_SHARED_DIR}/gazebo_sim/worlds:/fishbot_ws/src/gazebo_sim/worlds:ro
+      - ${FISHBOT_SHARED_DIR:?set FISHBOT_SHARED_DIR}/legged_sim:/legged_ws/src/legged_sim:ro
+
+  racer_ros1:
+    image: fishbot_multirobot_sim-racer_ros1:latest
+    pull_policy: never
+    build: !reset null
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${FISHBOT_SHARED_DIR:?set FISHBOT_SHARED_DIR}/racer_integration:/racer_integration:ro
+      - ${FISHBOT_SHARED_DIR:?set FISHBOT_SHARED_DIR}/exploration_manager/launch:/racer_ws/src/RACER/swarm_exploration/exploration_manager/launch:ro
+
+  swarm_lio2:
+    volumes:
+      - ${FISHBOT_SHARED_DIR:?set FISHBOT_SHARED_DIR}/racer_adapter:/opt/swarm_lio_ws/src/racer_adapter:ro
+      - ${FISHBOT_SHARED_DIR:?set FISHBOT_SHARED_DIR}/racer_integration:/racer_integration:ro
+
+  racer_controller:
+    volumes:
+      - ${FISHBOT_SHARED_DIR:?set FISHBOT_SHARED_DIR}/racer_integration:/racer_integration:ro

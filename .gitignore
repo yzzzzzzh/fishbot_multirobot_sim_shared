@@ -1,0 +1,9 @@
+# Runtime outputs: reproducible locally, not source code.
+runs/
+last_racer_ros1_environment.txt
+last_racer_ros1_image.txt
+
+# Python-generated local state.
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
