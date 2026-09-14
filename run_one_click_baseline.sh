@@ -9,6 +9,15 @@ set -a
 . "$root_dir/baseline.env"
 set +a
 
+run_name=${1:-"one_click_$(date +%Y%m%d_%H%M%S)"}
+host_run_dir="$root_dir/runs/$run_name"
+container_run_dir="/runs/$run_name"
+
+# Create the bind-mount source before Compose starts.  Otherwise Docker creates
+# a missing ./runs as root on a clean clone and the host user cannot create the
+# per-run output directory below it.
+mkdir -p "$host_run_dir"
+
 compose=(
   -f docker-compose.oneclick.yml
   -f docker-compose.racer-live.oneclick.yml
@@ -23,7 +32,11 @@ compose=(
 # repository. Docker downloads normal OS/ROS build dependencies on first use.
 # The final `gazebo` service is the Go2 image, so build its Gazebo parent first.
 docker compose "${compose[@]}" build base
-docker build --build-arg BASE_IMAGE=fishbot_base:latest \
+docker build --network=host \
+  --build-arg BASE_IMAGE=fishbot_base:latest \
+  --build-arg HTTP_PROXY="${FISHBOT_HTTP_PROXY:-}" \
+  --build-arg HTTPS_PROXY="${FISHBOT_HTTPS_PROXY:-}" \
+  --build-arg NO_PROXY="${FISHBOT_NO_PROXY:-localhost,127.0.0.1,::1}" \
   -f docker/Dockerfile.gazebo -t fishbot_multirobot_sim-gazebo:latest .
 docker compose "${compose[@]}" build swarm_lio2 racer_ros1 gazebo
 docker compose "${compose[@]}" stop racer_controller racer_ros1 swarm_lio2 gazebo >/dev/null 2>&1 || true
@@ -39,10 +52,6 @@ sleep 10
 docker exec fishbot_gazebo bash -lc \
   'source /opt/ros/humble/setup.bash; ros2 daemon stop >/dev/null 2>&1; timeout 20 ros2 param set /bot1/twist_to_control_input auto_trot true'
 
-run_name=${1:-"one_click_$(date +%Y%m%d_%H%M%S)"}
-host_run_dir="$root_dir/runs/$run_name"
-container_run_dir="/runs/$run_name"
-mkdir -p "$host_run_dir"
 docker inspect racer_ros1 --format '{{.Image}}' > "$host_run_dir/racer_ros1_image.txt"
 docker exec swarm_lio2_ros2 bash -lc "
   source /opt/ros/humble/setup.bash

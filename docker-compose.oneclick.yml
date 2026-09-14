@@ -12,6 +12,8 @@ services:
         HTTP_PROXY: ${FISHBOT_HTTP_PROXY:-}
         HTTPS_PROXY: ${FISHBOT_HTTPS_PROXY:-}
         NO_PROXY: ${FISHBOT_NO_PROXY:-localhost,127.0.0.1,::1}
+      # Allows a host-local proxy such as 127.0.0.1:7890 during the build.
+      network: host
     command: ["true"]
 
   gazebo:
@@ -95,6 +97,17 @@ services:
     extends:
       file: ./src/Swarm-LIO2-ROS2-Docker/docker/docker-compose.yaml
       service: swarm_lio2_ros2
+    build:
+      args:
+        HTTP_PROXY: ${FISHBOT_HTTP_PROXY:-}
+        HTTPS_PROXY: ${FISHBOT_HTTPS_PROXY:-}
+        NO_PROXY: ${FISHBOT_NO_PROXY:-localhost,127.0.0.1,::1}
+        http_proxy: ${FISHBOT_HTTP_PROXY:-}
+        https_proxy: ${FISHBOT_HTTPS_PROXY:-}
+        no_proxy: ${FISHBOT_NO_PROXY:-localhost,127.0.0.1,::1}
+      # Swarm-LIO2 downloads GTSAM; host networking makes loopback proxies
+      # reachable from BuildKit without changing the runtime network setup.
+      network: host
     command: >
       bash -lc "
         source /opt/ros/humble/setup.bash

@@ -42,7 +42,9 @@ cd fishbot_multirobot_sim_shared
 ```
 
 If the build must use a proxy, pass it explicitly rather than relying on a
-possibly stale host proxy setting:
+possibly stale host proxy setting. These variables are forwarded to every
+image build; host networking also makes a proxy listening only on
+`127.0.0.1` reachable during the build:
 
 ```bash
 FISHBOT_HTTP_PROXY=http://proxy.example:port \\
@@ -50,9 +52,10 @@ FISHBOT_HTTPS_PROXY=http://proxy.example:port \\
 ./run_one_click_baseline.sh
 ```
 
-The command builds the four required runtime images, starts the stack, waits
-for the recorder to finish, and writes `run.npz`, `run.summary.json`, and logs
-to `runs/`. The required `himloco` Go2 policy is included; Docker images and
+The command creates its host-side output directory before Compose mounts it,
+builds the four required runtime images, starts the stack, waits for the
+recorder to finish, and writes `run.npz`, `run.summary.json`, and logs to
+`runs/`. The required `himloco` Go2 policy is included; Docker images and
 generated run outputs are not committed.
 
 ## Run

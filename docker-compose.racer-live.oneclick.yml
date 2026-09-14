@@ -9,6 +9,15 @@ services:
     build:
       context: .
       dockerfile: src/racer_integration/Dockerfile.ros1
+      args:
+        HTTP_PROXY: ${FISHBOT_HTTP_PROXY:-}
+        HTTPS_PROXY: ${FISHBOT_HTTPS_PROXY:-}
+        NO_PROXY: ${FISHBOT_NO_PROXY:-localhost,127.0.0.1,::1}
+        http_proxy: ${FISHBOT_HTTP_PROXY:-}
+        https_proxy: ${FISHBOT_HTTPS_PROXY:-}
+        no_proxy: ${FISHBOT_NO_PROXY:-localhost,127.0.0.1,::1}
+      # RACER downloads NLopt and LKH while building; support loopback proxies.
+      network: host
     network_mode: host
     environment:
       ROS_MASTER_URI: http://127.0.0.1:11311
