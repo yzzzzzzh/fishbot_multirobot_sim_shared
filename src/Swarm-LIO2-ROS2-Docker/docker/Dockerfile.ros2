@@ -49,7 +49,7 @@ RUN rm -rf /var/lib/apt/lists/*
 WORKDIR /tmp/gtsam
 RUN curl --fail --location --connect-timeout 20 --max-time 300 \
       --retry 5 --retry-delay 3 --retry-all-errors \
-      https://codeload.github.com/borglab/gtsam/tar.gz/refs/heads/4.2 \
+      https://codeload.github.com/borglab/gtsam/tar.gz/refs/tags/4.2 \
       -o /tmp/gtsam-4.2.tar.gz \
     && mkdir -p gtsam \
     && tar -xzf /tmp/gtsam-4.2.tar.gz -C gtsam --strip-components=1 \
