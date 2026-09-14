@@ -1,0 +1,78 @@
+# Overlay: single Unitree Go2 running the Swarm-LIO2 -> RACER exploration stack.
+# Stack order:
+#   export LEGGED_COUNT=1 QUADRUPED_SPAWN_POSES='[[-14.0,-9.0,0.46,0.0]]'
+#   docker compose -f docker-compose.yml -f docker-compose.racer-live.yml \
+#     -f docker-compose.quadruped.yml -f docker-compose.legged.yml \
+#     -f docker-compose.legged-single.yml up -d gazebo swarm_lio2 racer_ros1 racer_controller
+# LEGGED_COUNT/QUADRUPED_SPAWN_POSES are interpolated on the host, so they must
+# be exported before `docker compose up`.
+services:
+  gazebo:
+    environment:
+      # Single-Go2 exploration defaults (post stand_pos fix, 2026-09-02):
+      # in-place turning restored, no idle parking, brake sweep says 1.8 m/s^2
+      # command slew is stable with 2x margin.
+      LEGGED_MIN_STEP_SPEED: "${LEGGED_MIN_STEP_SPEED:-0.0}"
+      LEGGED_PARK_WHEN_IDLE: "${LEGGED_PARK_WHEN_IDLE:-false}"
+      LEGGED_MAX_LINEAR_ACCEL: "${LEGGED_MAX_LINEAR_ACCEL:-1.8}"
+      LEGGED_MAX_ANGULAR_ACCEL: "${LEGGED_MAX_ANGULAR_ACCEL:-1.0}"
+
+  racer_ros1:
+    environment:
+      RACER_BOTS: "1"
+      # Legged platform: planner speed matched to the RL gait's stable envelope
+      # (0.5 m/s command -> ~0.36 m/s actual).
+      RACER_PLANNER_MAX_VEL: "${RACER_PLANNER_MAX_VEL:-1.2}"
+      RACER_PLANNER_MAX_ACC: "${RACER_PLANNER_MAX_ACC:-0.6}"
+      # Atrium tuning proven in the wheeled v123/v124 runs: 0.85 m inflation
+      # keeps planned paths off the walls (at 0.60 the raw-lidar clearance
+      # braking crawls at ~0.07 m/s along them); coarser far-cell handling.
+      RACER_OBSTACLES_INFLATION: "${RACER_OBSTACLES_INFLATION:-0.85}"
+      RACER_EXACT_DRONE_GRID_DIST: "${RACER_EXACT_DRONE_GRID_DIST:-40.0}"
+      RACER_PARTITIONING_MIN_UNKNOWN_RATIO: "${RACER_PARTITIONING_MIN_UNKNOWN_RATIO:-0.10}"
+      # Target hysteresis for the slow gait: hold a committed target >= 20 s
+      # (~4 m of travel) before periodic replans may switch it.
+      RACER_MIN_TARGET_EXECUTION_TIME: "${RACER_MIN_TARGET_EXECUTION_TIME:-8.0}"
+      # HGrid consistency-term sign (+1 upstream penalty, -1 hysteresis bonus); see hgrid.h
+      RACER_CONSISTENCY_SIGN: "${RACER_CONSISTENCY_SIGN:-1.0}"
+      RACER_FIRST_GRID_BONUS: "${RACER_FIRST_GRID_BONUS:-6.0}"   # run15: reversals 16->0, A-B-A 12->1, 90% 910->729 s
+
+  swarm_lio2:
+    environment:
+      RACER_BOTS: "1"
+      RACER_ADAPTER_CONFIG: ${RACER_ADAPTER_CONFIG:-racer_adapter_quadruped_go2_single.yaml}
+      SWARM_FORCE_UAV_NUM: "1"
+    command: >
+      bash -lc "
+        set -e
+        source /opt/ros/humble/setup.bash
+        cd /opt/swarm_lio_ws
+        colcon build --packages-select swarm_lio racer_adapter --cmake-args -DCMAKE_BUILD_TYPE=Release
+        source install/setup.bash
+        ros2 launch swarm_lio simulation.launch.py bot_list:=1 rviz_list:=none use_sim_time:=true ground_truth_logging_en:=false force_uav_num:=1 enable_mutual_observation_update:=false planar_odom_prior_en:=true point_filter_num:=2 filter_size_surf:=0.2 filter_size_map:=0.3 pcd_save_en:=false local_map_pub_en:=false &
+        ros2 launch racer_adapter racer_frame_adapter.launch.py config:=/opt/swarm_lio_ws/install/racer_adapter/share/racer_adapter/config/$${RACER_ADAPTER_CONFIG} &
+        exec /usr/bin/python3 /racer_integration/ros2_racer_gateway.py --bots 1 --host 127.0.0.1 --port 47100 --planar-no-return-rays --raw-lidar-range 10.0 --raw-lidar-horizontal-min -3.14159 --raw-lidar-horizontal-max 3.14159 --raw-lidar-vertical-min -0.126 --raw-lidar-vertical-max 0.907 --raw-lidar-target-elevation 0.0 --raw-lidar-max-range-margin 0.05 --raw-lidar-match-tolerance 0.12 --ros-args -p use_sim_time:=true
+      "
+
+  racer_controller:
+    environment:
+      RACER_BOTS: "1"
+      # Go2 geometry: Mid-360 0.095 m above the trunk IMU, ~0.40 m above the
+      # floor when standing; the floor sits ~0.40 m below the lidar.
+      RACER_LIDAR_TO_BODY_Z: "0.095"
+      RACER_LIDAR_SELF_FILTER_RADIUS: "0.35"
+      RACER_GROUND_OBSTACLE_Z_MIN: "-0.20"
+      RACER_MAX_HORIZONTAL_SPEED: "${RACER_PLANNER_MAX_VEL:-1.2}"
+      # ground_omni (2026-09-02): RL gait tracks body (vx,vy,wz) directly; the
+      # unicycle turn-in-place conversion is bypassed (lateral envelope swept:
+      # vy<=0.8 and |v|<=1.27 diagonal all stable).
+      RACER_PLATFORM_MODE: "ground_omni"
+      RACER_OBSTACLE_HARD_CLEARANCE: "0.50"
+      RACER_OBSTACLE_BRAKING_MARGIN: "0.50"
+    command: >
+      bash -lc "
+        set -e
+        source /opt/ros/humble/setup.bash
+        source /opt/swarm_lio_ws/install/setup.bash
+        exec /usr/bin/python3 /racer_integration/ros2_racer_controller.py --bots 1 --ros-args -p use_sim_time:=true -p platform_mode:=${RACER_PLATFORM_MODE:-ground_omni} -p max_horizontal_speed:=${RACER_PLANNER_MAX_VEL:-1.2} -p max_vertical_speed:=0.0 -p max_yaw_rate:=${RACER_MAX_YAW_RATE:-0.8} -p max_command_acceleration:=${RACER_PLANNER_MAX_ACC:-0.6} -p ground_heading_kp:=2.2 -p ground_turn_in_place_angle_deg:=35.0 -p stuck_recovery_dwell:=20.0 -p stuck_recovery_displacement:=0.12 -p stuck_recovery_duration:=2.0 -p ground_obstacle_z_min:=-0.20 -p ground_obstacle_z_max:=0.60 -p command_timeout:=1.0 -p odom_timeout:=1.5 -p attitude_timeout:=1.0 -p require_safety_monitor:=true -p bounds_lower:='[-50.0,-25.0,0.0]' -p bounds_upper:='[50.0,25.0,3.0]' -p bootstrap_root_only:=true -p bootstrap_ground_lateral_scale:=${RACER_BOOTSTRAP_LATERAL_SCALE:-0.375} -p bootstrap_loop_seconds:=${RACER_BOOTSTRAP_LOOP_SECONDS:-20.0} -p bootstrap_min_excitation_seconds:=${RACER_BOOTSTRAP_MIN_EXCITATION:-0.0} -p bootstrap_climb_height:=0.0 -p bootstrap_vertical_amplitude:=0.0 -p lidar_point_stride:=1 -p lidar_to_body_z:=0.095 -p lidar_self_filter_radius:=0.35 -p lidar_self_filter_z_min:=-0.50 -p lidar_self_filter_z_max:=0.50 -p obstacle_corridor_radius:=0.58 -p obstacle_hard_clearance:=${RACER_OBSTACLE_HARD_CLEARANCE:-0.50} -p obstacle_braking_margin:=${RACER_OBSTACLE_BRAKING_MARGIN:-0.50} -p obstacle_deceleration:=${RACER_OBSTACLE_DECELERATION:-1.5} -p obstacle_repulsion_activation:=${RACER_OBSTACLE_REPULSION_ACTIVATION:-1.45} -p obstacle_repulsion_speed:=0.5
+      "

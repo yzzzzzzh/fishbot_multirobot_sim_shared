@@ -1,0 +1,50 @@
+ARG BASE_IMAGE=fishbot_base:latest
+ARG ROS_DISTRO=humble
+FROM ${BASE_IMAGE}
+
+SHELL ["/bin/bash", "-c"]
+
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
+ENV http_proxy=${HTTP_PROXY}
+ENV https_proxy=${HTTPS_PROXY}
+ENV no_proxy=${NO_PROXY}
+
+WORKDIR /fishbot_ws
+
+# Add Isaac ROS apt repo (release-3 for Jammy) and CUDA 12.4 repo for GPU runtime libs
+RUN wget -qO - https://isaac.download.nvidia.com/isaac-ros/repos.key | apt-key add - \
+    && echo "deb https://isaac.download.nvidia.com/isaac-ros/release-3 $(lsb_release -cs) release-3.0" \
+       > /etc/apt/sources.list.d/isaac-ros.list \
+    && wget -qO /tmp/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
+    && dpkg -i /tmp/cuda-keyring.deb \
+    && rm /tmp/cuda-keyring.deb \
+    && apt-get update
+
+# Install runtime dependencies:
+#    - python3-numpy: used directly by map_fusion
+#    - ros-humble-nvblox-ros: NVBlox node + msgs + rviz plugin
+#    - cuda-runtime-12-4: CUDA 12 runtime (libcudart.so.12 and friends) required by NVBlox
+RUN apt-get install -y --no-install-recommends \
+        python3-numpy \
+        ros-humble-nvblox-ros \
+        cuda-runtime-12-4 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY src/map_fusion/package.xml src/map_fusion/
+RUN rosdep update \
+    && rosdep install --rosdistro humble --from-paths src/map_fusion --ignore-src -y
+
+COPY src/map_fusion/ src/map_fusion/
+
+RUN source /opt/ros/humble/setup.bash \
+    && colcon build --merge-install --symlink-install \
+        --packages-select map_fusion
+
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

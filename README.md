@@ -18,22 +18,32 @@ the planar adapter output and produces exploration trajectories.
 The ROS 1 image is checked at launch against the local image ID recorded by
 the baseline. Recording stops before it begins if the image differs.
 
-## Prerequisites
+## One-click deployment
 
 - Linux host with NVIDIA driver, Docker Engine, Docker Compose v2, and GPU
   container runtime.
-- A sibling checkout named `fishbot_multirobot_sim` containing the base compose
-  files, Dockerfiles, and prebuilt images. If it is elsewhere, set
-  `FISHBOT_REPO_DIR` to that checkout before launching.
-- Local Docker images `fishbot_base`, `fishbot_multirobot_sim-legged`,
-  `swarm-lio2-ros2`, and `fishbot_multirobot_sim-racer_ros1:latest`.
+- Internet access during the first build (ROS, GTSAM, NLopt, LKH and LibTorch
+  build dependencies are downloaded by Docker).
+- About 25 GB of free Docker storage. No sibling repository and no prebuilt
+  local image is required.
 
-This directory uses paths relative to itself. It does not contain or
-redistribute large Docker images, RL weights, caches, or run outputs.
+Clone and run the exact 200-s single-Go2 baseline:
+
+```bash
+git clone https://github.com/yzzzzzzh/fishbot_multirobot_sim_shared.git
+cd fishbot_multirobot_sim_shared
+./run_one_click_baseline.sh
+```
+
+The command builds the four required runtime images, starts the stack, waits
+for the recorder to finish, and writes `run.npz`, `run.summary.json`, and logs
+to `runs/`. The required `himloco` Go2 policy is included; Docker images and
+generated run outputs are not committed.
 
 ## Run
 
-Run the frozen shared-source baseline for 200 simulation seconds:
+The legacy overlay launcher below still requires the old sibling checkout. Use
+the one-click command above for a standalone clone.
 
 ```bash
 ./run_first_success_baseline.sh 200 /tmp/go2_baseline_200s

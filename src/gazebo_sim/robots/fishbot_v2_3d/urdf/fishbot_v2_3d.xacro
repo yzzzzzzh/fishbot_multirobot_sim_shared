@@ -1,0 +1,445 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="fishbot_v2_3d">
+  <xacro:arg name="config_file" default="$(find gazebo_sim)/robots/fishbot_v2_3d/config/fishbot_v2_3d.yaml"/>
+  <xacro:arg name="robot_namespace" default=""/>
+
+  <!-- Load YAML config -->
+  <xacro:property name="robot_namespace" value="$(arg robot_namespace)"/>
+  <xacro:property name="config_file"    value="$(arg config_file)"/>
+  <xacro:property name="cfg"            value="${xacro.load_yaml(config_file)}"/>
+  <xacro:property name="robot_cfg"      value="${cfg['robot']}"/>
+  <xacro:property name="geometry_cfg"   value="${cfg['geometry']}"/>
+  <xacro:property name="kinematics_cfg" value="${cfg['kinematics']}"/>
+  <xacro:property name="plugins_cfg"    value="${cfg['plugins']}"/>
+  <xacro:property name="imu_cfg"        value="${cfg['imu']}"/>
+  <xacro:property name="lidar_cfg"      value="${cfg['lidar']}"/>
+
+  <!-- Namespacing -->
+  <xacro:property name="ns"           value="${robot_namespace}"/>
+  <xacro:property name="frame_prefix" value="${ns + '/' if ns != '' else ''}"/>
+  <xacro:property name="topic_prefix" value="${'/' + ns if ns != '' else ''}"/>
+
+  <!-- Frames -->
+  <xacro:property name="base_frame"  value="${robot_cfg['base_frame']}"/>
+  <xacro:property name="lidar_frame" value="${robot_cfg['lidar_frame']}"/>
+  <xacro:property name="imu_frame"   value="${robot_cfg['imu_frame']}"/>
+  <xacro:property name="odom_frame"  value="${robot_cfg['odom_frame']}"/>
+  <xacro:property name="base_frame_prefixed"  value="${frame_prefix + base_frame}"/>
+  <xacro:property name="lidar_frame_prefixed" value="${frame_prefix + lidar_frame}"/>
+  <xacro:property name="imu_frame_prefixed"   value="${frame_prefix + imu_frame}"/>
+  <xacro:property name="odom_frame_prefixed"  value="${frame_prefix + odom_frame}"/>
+
+  <!-- Topics -->
+  <xacro:property name="odom_topic"    value="${topic_prefix + '/' + robot_cfg['odom_pub']}"/>
+  <xacro:property name="lidar_topic"   value="${topic_prefix + '/' + robot_cfg['lidar_pub']}"/>
+  <xacro:property name="imu_topic"     value="${topic_prefix + '/' + robot_cfg['imu_pub']}"/>
+  <xacro:property name="cmd_vel_topic" value="${topic_prefix + '/cmd_vel'}"/>
+
+  <!-- Geometry config -->
+  <xacro:property name="base_geom"   value="${geometry_cfg['base']}"/>
+  <xacro:property name="wheel_geom"  value="${geometry_cfg['wheel']}"/>
+  <xacro:property name="caster_geom" value="${geometry_cfg['caster']}"/>
+  <xacro:property name="wheel_radius"  value="${wheel_geom['radius']}"/>
+  <xacro:property name="wheel_length"  value="${wheel_geom['length']}"/>
+  <xacro:property name="wheel_inertia" value="${wheel_geom['inertia_diag']}"/>
+  <xacro:property name="caster_radius" value="${caster_geom['radius']}"/>
+  <xacro:property name="base_radius" value="${base_geom['cyl_radius']}"/>
+  <xacro:property name="base_length" value="${base_geom['cyl_length']}"/>
+  <xacro:property name="wheel_mass"  value="${wheel_geom['mass']}"/>
+  <xacro:property name="base_mass"   value="${base_geom['mass']}"/>
+  <xacro:property name="caster_mass" value="${caster_geom['mass']}"/>
+  <xacro:property name="base_ixx" value="${base_geom['inertia']['ixx']}"/>
+  <xacro:property name="base_iyy" value="${base_geom['inertia']['iyy']}"/>
+  <xacro:property name="base_izz" value="${base_geom['inertia']['izz']}"/>
+
+  <!-- Kinematics / diff drive -->
+  <xacro:property name="kin_cfg"        value="${kinematics_cfg}"/>
+  <xacro:property name="wheel_sep"      value="${kin_cfg['wheel_separation']}"/>
+  <xacro:property name="wheel_diameter" value="${kin_cfg['wheel_diameter']}"/>
+  <xacro:property name="diff_drive_cfg"   value="${plugins_cfg['diff_drive']}"/>
+  <xacro:property name="diff_update_rate" value="${diff_drive_cfg['update_rate']}"/>
+  <xacro:property name="diff_publish_odom_bool" value="${bool(diff_drive_cfg.get('publish_odom', True))}"/>
+  <xacro:property name="diff_publish_tf_bool"   value="${bool(diff_drive_cfg.get('publish_odom_tf', True))}"/>
+  <xacro:property name="diff_publish_odom" value="${'true' if diff_publish_odom_bool else 'false'}"/>
+  <xacro:property name="diff_publish_tf"   value="${'true' if diff_publish_tf_bool else 'false'}"/>
+  <xacro:property name="diff_tf_topic"     value="${'/tf' if diff_publish_tf_bool else '/tf_disabled'}"/>
+
+  <!-- Laser retro from config -->
+  <xacro:property name="laser_retro" value="${robot_cfg.get('laser_retro', 0.0)}"/>
+
+  <!-- Height layout: wheels / caster on ground, base body above -->
+  <xacro:property name="base_clearance" value="0.01"/>
+  <xacro:property name="base_z_offset" value="${wheel_radius + base_clearance + base_length * 0.5}"/>
+  <xacro:property name="base_top_z"    value="${base_z_offset + base_length * 0.5}"/>
+  <xacro:property name="lidar_joint_z" value="${base_top_z + 0.02}"/>
+  <xacro:property name="imu_joint_z"   value="${base_z_offset}"/>
+
+  <!-- ========================================================= -->
+  <!-- GEOMETRY links + joints                                  -->
+  <!-- ========================================================= -->
+
+  <!-- Base link -->
+  <link name="${base_frame}">
+    <visual>
+      <origin xyz="0 0 ${base_z_offset}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="${base_length}" radius="${base_radius}"/>
+      </geometry>
+      <material name="blue">
+        <color rgba="0.1 0.1 1.0 0.5"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${base_z_offset}" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="${base_length}" radius="${base_radius}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${base_mass}"/>
+      <inertia ixx="${base_ixx}" ixy="0" ixz="0" iyy="${base_iyy}" iyz="0" izz="${base_izz}"/>
+    </inertial>
+  </link>
+
+  <!-- Lidar link -->
+  <link name="${lidar_frame}">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.02" radius="0.02"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.0 0.0 0.0 0.5"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.02" radius="0.02"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="${wheel_inertia}" ixy="0" ixz="0" iyy="${wheel_inertia}" iyz="0" izz="${wheel_inertia}"/>
+    </inertial>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+    <parent link="${base_frame}"/>
+    <child link="${lidar_frame}"/>
+    <origin xyz="0 0 ${lidar_joint_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- IMU link -->
+  <link name="${imu_frame}">
+    <visual>
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.02 0.02"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.02 0.02"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="${wheel_inertia}" ixy="0" ixz="0" iyy="${wheel_inertia}" iyz="0" izz="${wheel_inertia}"/>
+    </inertial>
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+    <parent link="${base_frame}"/>
+    <child link="${imu_frame}"/>
+    <origin xyz="0 0 ${imu_joint_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Wheels -->
+  <link name="left_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+      <geometry>
+        <cylinder length="${wheel_length}" radius="${wheel_radius}"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+      <geometry>
+        <cylinder length="${wheel_length}" radius="${wheel_radius}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${wheel_mass}"/>
+      <inertia ixx="${wheel_inertia}" ixy="0" ixz="0" iyy="${wheel_inertia}" iyz="0" izz="${wheel_inertia}"/>
+    </inertial>
+  </link>
+
+  <link name="right_wheel_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+      <geometry>
+        <cylinder length="${wheel_length}" radius="${wheel_radius}"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+      <geometry>
+        <cylinder length="${wheel_length}" radius="${wheel_radius}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${wheel_mass}"/>
+      <inertia ixx="${wheel_inertia}" ixy="0" ixz="0" iyy="${wheel_inertia}" iyz="0" izz="${wheel_inertia}"/>
+    </inertial>
+  </link>
+
+  <!-- Wheel centers at wheel_radius -> bottom at z = 0 -->
+  <joint name="left_wheel_joint" type="continuous">
+    <parent link="${base_frame}"/>
+    <child link="left_wheel_link"/>
+    <origin xyz="-0.02 0.10 ${wheel_radius}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <joint name="right_wheel_joint" type="continuous">
+    <parent link="${base_frame}"/>
+    <child link="right_wheel_link"/>
+    <origin xyz="-0.02 -0.10 ${wheel_radius}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- Caster -->
+  <link name="caster_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${caster_mass}"/>
+      <inertia ixx="${wheel_inertia}" ixy="0" ixz="0" iyy="${wheel_inertia}" iyz="0" izz="${wheel_inertia}"/>
+    </inertial>
+  </link>
+
+  <!-- Caster center at caster_radius -> bottom at z = 0 -->
+  <joint name="caster_joint" type="fixed">
+    <parent link="${base_frame}"/>
+    <child link="caster_link"/>
+    <origin xyz="0.06 0.0 ${caster_radius}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- Second caster for stability -->
+  <link name="caster2_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+      <geometry>
+        <sphere radius="${caster_radius}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${caster_mass}"/>
+      <inertia ixx="${wheel_inertia}" ixy="0" ixz="0" iyy="${wheel_inertia}" iyz="0" izz="${wheel_inertia}"/>
+    </inertial>
+  </link>
+
+  <!-- Second caster center at caster_radius -> bottom at z = 0 -->
+  <joint name="caster2_joint" type="fixed">
+    <parent link="${base_frame}"/>
+    <child link="caster2_link"/>
+    <origin xyz="-0.06 0.0 ${caster_radius}" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- ========================================================= -->
+  <!-- GAZEBO PLUGINS / EXTRAS                                   -->
+  <!-- ========================================================= -->
+  <!-- Gazebo visuals / friction -->
+  <gazebo reference="caster_link">
+    <material>Gazebo/Black</material>
+  </gazebo>
+
+  <gazebo reference="caster_link">
+    <mu1 value="0.0"/>
+    <mu2 value="0.0"/>
+    <slip1 value="1.0"/>
+    <slip2 value="1.0"/>
+    <kp value="1000000.0"/>
+    <kd value="10.0"/>
+  </gazebo>
+  <gazebo reference="caster2_link">
+    <material>Gazebo/Black</material>
+  </gazebo>
+
+  <gazebo reference="caster2_link">
+    <mu1 value="0.0"/>
+    <mu2 value="0.0"/>
+    <slip1 value="1.0"/>
+    <slip2 value="1.0"/>
+    <kp value="1000000.0"/>
+    <kd value="10.0"/>
+  </gazebo>
+
+  <!-- Diff-drive plugin -->
+  <gazebo>
+    <plugin
+        filename="ignition-gazebo-diff-drive-system"
+        name="ignition::gazebo::systems::DiffDrive">
+      <odom_publish_frequency>${diff_update_rate}</odom_publish_frequency>
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <wheel_separation>${wheel_sep}</wheel_separation>
+      <wheel_radius>${wheel_diameter * 0.5}</wheel_radius>
+      <topic>${cmd_vel_topic}</topic>
+      <odom_topic>${odom_topic}</odom_topic>
+      <tf_topic>${diff_tf_topic}</tf_topic>
+      <odom_frame>${odom_frame_prefixed}</odom_frame>
+      <robot_base_frame>${base_frame_prefixed}</robot_base_frame>
+      <publish_odom>${diff_publish_odom}</publish_odom>
+      <publish_tf>${diff_publish_tf}</publish_tf>
+    </plugin>
+  </gazebo>
+
+  <!-- High LiDAR reflectivity on robot body -->
+  <gazebo reference="${base_frame}">
+    <visual><laser_retro>${laser_retro}</laser_retro></visual>
+  </gazebo>
+  <gazebo reference="${lidar_frame}">
+    <visual><laser_retro>${laser_retro}</laser_retro></visual>
+  </gazebo>
+  <gazebo reference="left_wheel_link">
+    <visual><laser_retro>${laser_retro}</laser_retro></visual>
+  </gazebo>
+  <gazebo reference="right_wheel_link">
+    <visual><laser_retro>${laser_retro}</laser_retro></visual>
+  </gazebo>
+  <gazebo reference="caster_link">
+    <visual><laser_retro>${laser_retro}</laser_retro></visual>
+  </gazebo>
+  <gazebo reference="caster2_link">
+    <visual><laser_retro>${laser_retro}</laser_retro></visual>
+  </gazebo>
+
+  <!-- ========================================================= -->
+  <!-- SENSORS (Gazebo sensors attached to links)                -->
+  <!-- ========================================================= -->
+
+  <!-- IMU sensor -->
+  <gazebo reference="${imu_frame}">
+    <sensor name="imu_sensor" type="imu">
+      <always_on>true</always_on>
+      <update_rate>${imu_cfg['update_rate']}</update_rate>
+      <visualize>${'true' if imu_cfg['visualize'] else 'false'}</visualize>
+      <topic>${imu_topic}</topic>
+      <gz_frame_id>${imu_frame_prefixed}</gz_frame_id>
+      <enable_metrics>true</enable_metrics>
+      <imu>
+        <angular_velocity>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['ang_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['ang_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['ang_bias_stddev']}</bias_stddev>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['ang_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['ang_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['ang_bias_stddev']}</bias_stddev>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['ang_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['ang_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['ang_bias_stddev']}</bias_stddev>
+            </noise>
+          </z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['lin_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['lin_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['lin_bias_stddev']}</bias_stddev>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['lin_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['lin_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['lin_bias_stddev']}</bias_stddev>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['lin_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['lin_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['lin_bias_stddev']}</bias_stddev>
+            </noise>
+          </z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+  <!-- Lidar sensor -->
+  <gazebo reference="${lidar_frame}">
+    <sensor name="lidar_sensor" type="gpu_lidar">
+      <always_on>true</always_on>
+      <visualize>${'true' if lidar_cfg['visualize'] else 'false'}</visualize>
+      <update_rate>${lidar_cfg['update_rate']}</update_rate>
+      <topic>${lidar_topic}</topic>
+      <gz_frame_id>${lidar_frame_prefixed}</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>${lidar_cfg['h_rays']['samples']}</samples>
+            <resolution>${lidar_cfg['h_rays']['resolution']}</resolution>
+            <min_angle>${lidar_cfg['h_rays']['min_angle']}</min_angle>
+            <max_angle>${lidar_cfg['h_rays']['max_angle']}</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>${lidar_cfg['v_rays']['samples']}</samples>
+            <resolution>${lidar_cfg['v_rays']['resolution']}</resolution>
+            <min_angle>${lidar_cfg['v_rays']['min_angle']}</min_angle>
+            <max_angle>${lidar_cfg['v_rays']['max_angle']}</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>${lidar_cfg['range_min']}</min>
+          <max>${lidar_cfg['range_max']}</max>
+          <resolution>${lidar_cfg['range_res']}</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>${lidar_cfg['noise_stddev']}</stddev>
+        </noise>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+</robot>

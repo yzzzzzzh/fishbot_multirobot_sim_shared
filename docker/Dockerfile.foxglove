@@ -1,0 +1,37 @@
+ARG BASE_IMAGE=fishbot_base:latest
+FROM ${BASE_IMAGE}
+
+SHELL ["/bin/bash", "-c"]
+
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
+ENV http_proxy=${HTTP_PROXY}
+ENV https_proxy=${HTTPS_PROXY}
+ENV no_proxy=${NO_PROXY}
+
+WORKDIR /fishbot_ws
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        libfuse2
+
+COPY src/foxglove_app/package.xml src/foxglove_app/
+RUN rosdep update \
+    && rosdep install --rosdistro humble --from-paths src/foxglove_app --ignore-src -y
+
+COPY src/foxglove_app/ src/foxglove_app/
+
+RUN source /opt/ros/humble/setup.bash \
+    && colcon build --merge-install --symlink-install \
+        --packages-select fishbot_foxglove
+
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]
+
