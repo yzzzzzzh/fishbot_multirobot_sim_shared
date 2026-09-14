@@ -27,6 +27,7 @@ docker build --build-arg BASE_IMAGE=fishbot_base:latest \
   -f docker/Dockerfile.gazebo -t fishbot_multirobot_sim-gazebo:latest .
 docker compose "${compose[@]}" build swarm_lio2 racer_ros1 gazebo
 docker compose "${compose[@]}" stop racer_controller racer_ros1 swarm_lio2 gazebo >/dev/null 2>&1 || true
+docker rm -f fishbot_gazebo swarm_lio2_ros2 racer_ros1 racer_controller >/dev/null 2>&1 || true
 docker run --rm --ipc=host fishbot_base:latest bash -lc \
   "find /dev/shm -maxdepth 1 -type f \\( -name 'fastrtps_*' -o -name 'sem.fastrtps_*' \\) -delete"
 docker compose "${compose[@]}" up -d --force-recreate gazebo swarm_lio2 racer_ros1 racer_controller
