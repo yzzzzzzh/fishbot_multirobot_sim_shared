@@ -1,0 +1,4 @@
+services:
+  swarm_lio2:
+    volumes:
+      - ./runs:/runs

@@ -1,0 +1,4 @@
+services:
+  # RACER is also inspected by the launch recorder, so use a stable name.
+  racer_ros1:
+    image: fishbot_multirobot_sim-racer_ros1:latest

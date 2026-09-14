@@ -15,8 +15,9 @@ the planar adapter output and produces exploration trajectories.
 - `exploration_manager/launch/`: RACER launch configuration.
 - `baseline.env`: resolved baseline parameters.
 
-The ROS 1 image is checked at launch against the local image ID recorded by
-the baseline. Recording stops before it begins if the image differs.
+The legacy launcher checks the ROS 1 image against the local image ID recorded
+by the original baseline. The standalone launcher instead rebuilds its pinned
+source tree into local images.
 
 ## One-click deployment
 
@@ -32,6 +33,15 @@ Clone and run the exact 200-s single-Go2 baseline:
 ```bash
 git clone https://github.com/yzzzzzzh/fishbot_multirobot_sim_shared.git
 cd fishbot_multirobot_sim_shared
+./run_one_click_baseline.sh
+```
+
+If the build must use a proxy, pass it explicitly rather than relying on a
+possibly stale host proxy setting:
+
+```bash
+FISHBOT_HTTP_PROXY=http://proxy.example:port \\
+FISHBOT_HTTPS_PROXY=http://proxy.example:port \\
 ./run_one_click_baseline.sh
 ```
 
@@ -91,7 +101,9 @@ recording of the physical robot model.
 ## Before publishing on GitHub
 
 Do not commit `runs/`, generated logs, videos, `.npz` files, Python caches,
-Docker images, or RL weights. Add a root `LICENSE` only for code you own, and
-create `THIRD_PARTY_NOTICES.md` listing RACER, Swarm-LIO2, Unitree/Go2 assets,
-and each upstream license. Verify redistribution rights for all model files
-and simulation assets before including them in a public repository.
+or Docker images. The baseline's required Go2 policy is intentionally included
+at `src/legged/qrc/go2_description/config/himloco/himloco.pt`; verify its
+redistribution rights, and those of every other third-party model and
+simulation asset, before making the repository public. Add a root `LICENSE`
+only for code you own and create `THIRD_PARTY_NOTICES.md` listing RACER,
+Swarm-LIO2, Unitree/Go2 assets, and each upstream license.

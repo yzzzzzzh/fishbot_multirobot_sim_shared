@@ -9,9 +9,9 @@ services:
       dockerfile: docker/Dockerfile.legged
       args:
         BASE_IMAGE: fishbot_multirobot_sim-gazebo:latest
-        HTTP_PROXY: ${HTTP_PROXY:-}
-        HTTPS_PROXY: ${HTTPS_PROXY:-}
-        NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
+        HTTP_PROXY: ${FISHBOT_HTTP_PROXY:-}
+        HTTPS_PROXY: ${FISHBOT_HTTPS_PROXY:-}
+        NO_PROXY: ${FISHBOT_NO_PROXY:-localhost,127.0.0.1}
       network: host
     environment:
       # Bridge tuning must be exported INTO the container: the launch file reads
