@@ -47,8 +47,14 @@ RUN rm -rf /var/lib/apt/lists/*
 
 # ---- GTSAM (from official repo) ----
 WORKDIR /tmp/gtsam
-RUN git clone --branch 4.2 https://github.com/borglab/gtsam.git gtsam && \
-    mkdir -p gtsam/build && cd gtsam/build && \
+RUN curl --fail --location --connect-timeout 20 --max-time 300 \
+      --retry 5 --retry-delay 3 --retry-all-errors \
+      https://codeload.github.com/borglab/gtsam/tar.gz/refs/heads/4.2 \
+      -o /tmp/gtsam-4.2.tar.gz \
+    && mkdir -p gtsam \
+    && tar -xzf /tmp/gtsam-4.2.tar.gz -C gtsam --strip-components=1 \
+    && rm /tmp/gtsam-4.2.tar.gz \
+    && mkdir -p gtsam/build && cd gtsam/build && \
     cmake .. \
       -DCMAKE_BUILD_TYPE=Release \
       -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF \
