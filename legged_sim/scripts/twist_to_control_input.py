@@ -35,6 +35,11 @@ class TwistToControlInput(Node):
         self.vx_limit = float(self.declare_parameter("vx_limit", 0.4).value)
         self.vy_limit = float(self.declare_parameter("vy_limit", 0.3).value)
         self.wz_limit = float(self.declare_parameter("wz_limit", 0.5).value)
+        if self.vx_limit <= 0.0 or self.vy_limit <= 0.0 or self.wz_limit <= 0.0:
+            raise ValueError(
+                "vx_limit, vy_limit, and wz_limit must all be positive; "
+                f"got ({self.vx_limit}, {self.vy_limit}, {self.wz_limit})"
+            )
         self.auto_trot = bool(self.declare_parameter("auto_trot", True).value)
         # "trotting" (unitree_guide: fixed stand -> 4) or "rl" (rl controller: fixed stand -> 3)
         self.walk_state = str(self.declare_parameter("walk_state", "trotting").value)
