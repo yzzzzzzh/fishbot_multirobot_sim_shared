@@ -6,6 +6,7 @@ Author: Fangcheng Zhu
 email: zhufc@connect.hku.hk
 */
 #include "MultiUAV.h"
+#include "trajectory_alignment.hpp"
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <cmath>
@@ -61,9 +62,19 @@ Multi_UAV::Multi_UAV(const rclcpp::Node::SharedPtr node, const int & drone_id_) 
     LoadParam("multiuav/cluster_extraction_in_predict_region", cluster_extraction_in_predict_region, bool(true));
     LoadParam("multiuav/inten_threshold", inten_threshold, int(100));
     LoadParam("multiuav/min_high_inten_cluster_size", min_high_inten_cluster_size, int(2));
+    LoadParam("multiuav/min_high_inten_range", min_high_inten_range, double(0.0));
+    LoadParam("multiuav/temp_tracker_lost_timeout",
+              temp_tracker_lost_timeout, double(2.0));
+    LoadParam("multiuav/temp_tracker_prediction_horizon",
+              temp_tracker_prediction_horizon, double(-1.0));
     LoadParam("multiuav/min_cluster_size", min_cluster_size, int(50));
     LoadParam("multiuav/traj_matching_start_thresh", traj_matching_start_thresh, double(50));
+    LoadParam("multiuav/traj_matching_time_tolerance",
+              traj_matching_time_tolerance, double(1e-5));
+    LoadParam("multiuav/traj_matching_min_sample_fraction",
+              traj_matching_min_sample_fraction, double(0.1));
     LoadParam("multiuav/ave_match_error_thresh", ave_match_error_thresh, double(0.5));
+    LoadParam("multiuav/max_abs_match_yaw_deg", max_abs_match_yaw_deg, double(-1.0));
     LoadParam("multiuav/predict_region_radius", predict_region_radius, double(1.0));
     LoadParam("multiuav/temp_predict_region_radius", temp_predict_region_radius, double(1.0));
     LoadParam("multiuav/pos_num_in_traj", pos_num_in_traj, int(100));
@@ -71,9 +82,43 @@ Multi_UAV::Multi_UAV(const rclcpp::Node::SharedPtr node, const int & drone_id_) 
     LoadParam("multiuav/valid_cluster_size_thresh", valid_cluster_size_thresh, 0.6);
     LoadParam("multiuav/valid_cluster_dist_thresh", valid_cluster_dist_thresh, 0.35);
     LoadParam("multiuav/actual_uav_num", actual_uav_num, 4);
+    LoadParam("multiuav/comm_range", comm_range, double(-1.0));
+    LoadParam("multiuav/cross_world_transform_mode",
+              cross_world_transform_mode_, string("se3"));
+    LoadParam("multiuav/gravity_constrained_extrinsic_rotation",
+              gravity_constrained_extrinsic_rotation_, bool(false));
+    LoadParam("multiuav/use_raw_temp_measurement_for_traj_matching",
+              use_raw_temp_measurement_for_traj_matching_, bool(false));
+    LoadParam("multiuav/trajectory_samples_require_measurement",
+              trajectory_samples_require_measurement_, bool(false));
+    use_legacy_se2_extrinsics_ =
+        cross_world_transform_mode_ == "se2" ||
+        cross_world_transform_mode_ == "se2_legacy";
+    if (!use_legacy_se2_extrinsics_ &&
+        cross_world_transform_mode_ != "se3") {
+        RCLCPP_WARN(node_->get_logger(),
+                    "Unknown cross_world_transform_mode='%s'; using 'se3'",
+                    cross_world_transform_mode_.c_str());
+        cross_world_transform_mode_ = "se3";
+    }
+    RCLCPP_INFO(node_->get_logger(),
+                "Cross-world transform mode: %s; gravity-constrained tilt=%s",
+                use_legacy_se2_extrinsics_
+                    ? "se2_legacy (yaw + x/y, z forced to zero)"
+                    : "se3 (full 3D rotation + x/y/z)",
+                gravity_constrained_extrinsic_rotation_ ? "true" : "false");
 
     string sub_quadstate_topic_name = "/quadstate_from_teammate";
     string sub_global_extrinsic_topic_name = "/global_extrinsic_from_teammate";
+    string quadstate_publish_topic = "/quadstate_to_teammate";
+    // QuadState is a high-rate "latest state" stream.  A reliable default
+    // queue can accumulate seconds of stale packets when two LIO processes
+    // briefly run at different rates, after which IsDurationShort rejects
+    // every packet and trajectory initialization can never collect teammate
+    // odometry.  Depth one intentionally drops obsolete state; the separate
+    // global-extrinsic channel remains reliable.
+    const auto teammate_state_qos =
+        rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
 
 
     same_obj_thresh = 0.3;
@@ -84,24 +129,56 @@ Multi_UAV::Multi_UAV(const rclcpp::Node::SharedPtr node, const int & drone_id_) 
     if (lidar_type == SIM) {
         //For Decentralized Simulation
         QuadState_subscriber_sim = node_->create_subscription<swarm_msgs::msg::QuadStatePub>(
-            sub_quadstate_topic_name, rclcpp::SystemDefaultsQoS(),
+            sub_quadstate_topic_name, teammate_state_qos,
             std::bind(&Multi_UAV::QuadstateCbk, this, std::placeholders::_1));
         GlobalExtrinsic_subscriber_sim = node_->create_subscription<swarm_msgs::msg::GlobalExtrinsicStatus>(
             sub_global_extrinsic_topic_name, rclcpp::SystemDefaultsQoS(),
             std::bind(&Multi_UAV::GlobalExtrinsicCbk, this, std::placeholders::_1));
         same_obj_thresh = 0.5;
         valid_temp_cluster_dist_thresh = 0.8;
-        sub_quadstate_topic_name = "/quadstate_to_teammate";
+        // A shared multi-writer topic intermittently starved one Fast-DDS
+        // reader even though both writers were publishing at 10 Hz.  Each
+        // simulated robot therefore owns one state channel and directly
+        // subscribes to every peer.  This remains decentralized peer-to-peer
+        // communication and avoids a relay or central state server.
+        sub_quadstate_topic_name.clear();
+        for (int peer_id = 1; peer_id <= actual_uav_num; ++peer_id) {
+            if (peer_id == drone_id)
+                continue;
+            const string peer_topic =
+                "/bot" + SetString(peer_id) +
+                "/quadstate_to_teammate";
+            QuadState_peer_subscribers.push_back(
+                node_->create_subscription<
+                    swarm_msgs::msg::QuadStatePub>(
+                    peer_topic, teammate_state_qos,
+                    std::bind(
+                        &Multi_UAV::QuadstateCbk, this,
+                        std::placeholders::_1)));
+        }
+        quadstate_publish_topic =
+            "/bot" + SetString(drone_id) +
+            "/quadstate_to_teammate";
         sub_global_extrinsic_topic_name = "/global_extrinsic_to_teammate";
         topic_name_prefix = "bot" + SetString(drone_id) + "/";
         text_scale = 0.6;
         mesh_scale = 1.2;
     }
+    LoadParam("multiuav/valid_temp_cluster_dist_thresh",
+              valid_temp_cluster_dist_thresh,
+              valid_temp_cluster_dist_thresh);
 
-    QuadState_subscriber = node_->create_subscription<swarm_msgs::msg::QuadStatePub>(
-        sub_quadstate_topic_name, rclcpp::SystemDefaultsQoS(),
-        std::bind(&Multi_UAV::QuadstateCbk, this, std::placeholders::_1));
-    QuadState_publisher = node_->create_publisher<swarm_msgs::msg::QuadStatePub>("/quadstate_to_teammate", rclcpp::SystemDefaultsQoS());
+    if (!sub_quadstate_topic_name.empty()) {
+        QuadState_subscriber =
+            node_->create_subscription<swarm_msgs::msg::QuadStatePub>(
+                sub_quadstate_topic_name, teammate_state_qos,
+                std::bind(
+                    &Multi_UAV::QuadstateCbk, this,
+                    std::placeholders::_1));
+    }
+    QuadState_publisher =
+        node_->create_publisher<swarm_msgs::msg::QuadStatePub>(
+            quadstate_publish_topic, teammate_state_qos);
     GlobalExtrinsic_subscriber = node_->create_subscription<swarm_msgs::msg::GlobalExtrinsicStatus>(
         sub_global_extrinsic_topic_name, rclcpp::SystemDefaultsQoS(),
         std::bind(&Multi_UAV::GlobalExtrinsicCbk, this, std::placeholders::_1));
@@ -159,6 +236,22 @@ void Multi_UAV::QuadstateCbk(const swarm_msgs::msg::QuadStatePub::SharedPtr msg)
     int id = msg->drone_id;
     if (id == drone_id)
         return;
+
+    // --- Limited communication range (radio model) -------------------------
+    // Positions live in per-drone world frames; compare through the global
+    // extrinsic once it is known (p_my_world = R_ge*p_teammate + t_ge, see
+    // CreateNewTeammateTracker). Before the extrinsic is known the drones are
+    // still clustered near their spawns (well inside range), so an unknown
+    // extrinsic is treated as in-range rather than deadlocking discovery.
+    if (comm_range > 0 && id >= 0 && id < MAX_UAV_NUM &&
+        state.global_extrinsic_trans[id].norm() > 0.001) {
+        V3D t_pos(msg->pose.pose.position.x, msg->pose.pose.position.y,
+                  msg->pose.pose.position.z);
+        V3D t_in_my = state.global_extrinsic_rot[id] * t_pos
+                      + state.global_extrinsic_trans[id];
+        if ((t_in_my - state.pos_end).norm() > comm_range)
+            return;                    // out of radio range: drop the packet
+    }
 
     auto iter = teammates.find(id);
     if (iter != teammates.end()) {
@@ -273,7 +366,8 @@ void Multi_UAV::GlobalExtrinsicCbk(const swarm_msgs::msg::GlobalExtrinsicStatus:
         M3D rot_jk = EulerToRotM(rot_jk_rad);
         V3D trans_jk = V3D(msg->extrinsic[k].trans[0], msg->extrinsic[k].trans[1], msg->extrinsic[k].trans[2]);
 
-        project_extrinsic_se2(rot_jk, trans_jk);
+        if (use_legacy_se2_extrinsics_)
+            project_extrinsic_se2(rot_jk, trans_jk);
 
         mars::EdgeData edge;
         edge.from = id_j;
@@ -311,7 +405,8 @@ void Multi_UAV::UpdateFactorGraph(const bool &print_log) {
     extrinsic_infection.SolveGraphIsam2(state);
     for (auto iter = teammates.begin(); iter != teammates.end(); ++iter) {
         const int id = iter->first;
-        if (state.global_extrinsic_trans[id].norm() > 1e-3)
+        if (use_legacy_se2_extrinsics_ &&
+            state.global_extrinsic_trans[id].norm() > 1e-3)
             project_extrinsic_se2(state.global_extrinsic_rot[id], state.global_extrinsic_trans[id]);
     }
     if (print_log)
@@ -510,7 +605,10 @@ bool Multi_UAV::IsDurationShort(const double &lidar_end_time, Teammate &teammate
             teammate.first_connect_time = lidar_end_time;
         return true;
     } else{
-        cout << YELLOW << "[ WARN ] Message from drone " << id << " is out of time, delta_t = " << delta_t_quad << RESET << endl;
+        RCLCPP_WARN_THROTTLE(
+            node_->get_logger(), *node_->get_clock(), 2000,
+            "Message from drone %d is out of time, delta_t=%.3f s",
+            id, delta_t_quad);
         return false;
     }
 }
@@ -727,6 +825,12 @@ void Multi_UAV::ClusterExtractPredictRegion(const double &lidar_end_time, const 
 
 
     //Nearest Search
+    // guard: setInputCloud on an EMPTY cloud leaves the FLANN index null, so a
+    // later radiusSearch dereferences null -> SIGSEGV (addr 0x8). The transform
+    // guards can now legitimately leave the merged cloud empty on a bad frame,
+    // so skip cluster extraction this frame when there is nothing to search.
+    if (cur_pcl_undistort_remove_far_points->points.empty())
+        return;
     pcl::search::KdTree<pcl::PointXYZINormal>::Ptr kdtree_all(new pcl::search::KdTree<pcl::PointXYZINormal>);
     //KD-TREE建树耗时较大
     kdtree_all->setInputCloud(cur_pcl_undistort_remove_far_points);
@@ -799,8 +903,11 @@ void Multi_UAV::ClusterExtractPredictRegion(const double &lidar_end_time, const 
         body_to_gravity.block<3, 3>(0, 0) = rot_world_to_gravity * state.rot_end;
         body_to_gravity.block<3, 1>(0, 3) = rot_world_to_gravity * state.pos_end;
         pcl::PointCloud<pcl::PointXYZ>::Ptr all_predict_region_cloud_world(new pcl::PointCloud<pcl::PointXYZ>());
-        make_pcl_unorganized(all_predict_region_cloud);
-        pcl::transformPointCloud(all_predict_region_cloud, *all_predict_region_cloud_world, body_to_gravity, /*copy_all_fields=*/false);
+        // guard: transformPointCloud SIGFPEs (integer div by width) on an empty cloud
+        if (!all_predict_region_cloud.points.empty()) {
+            make_pcl_unorganized(all_predict_region_cloud);
+            pcl::transformPointCloud(all_predict_region_cloud, *all_predict_region_cloud_world, body_to_gravity, /*copy_all_fields=*/false);
+        }
         pcl::toROSMsg(*all_predict_region_cloud_world, cluster_input_msg);
         cluster_input_msg.header.stamp = stamp_from_sec(lidar_end_time);
         cluster_input_msg.header.frame_id = topic_name_prefix + "world";
@@ -865,6 +972,14 @@ void Multi_UAV::ClusterExtractHighIntensity(const double &lidar_end_time, const 
             pt_add.y = cur_pcl_undistort->points[i].y;
             pt_add.z = cur_pcl_undistort->points[i].z;
             V3D dist(pt_add.x, pt_add.y, pt_add.z);
+
+            // The simulated GPU lidar can see the carrying vehicle's own
+            // retro-reflective body.  Those returns form a persistent cluster
+            // at the local origin and can monopolize the temporary tracker.
+            // Keep the upstream default (0 m) for real sensors, and configure
+            // a body-sized exclusion radius only in simulation.
+            if (dist.norm() < min_high_inten_range)
+                continue;
 
             //距离小于20m的高反点，才用于聚类
             if(lidar_type != SIM && dist.norm() > 20)
@@ -1045,7 +1160,7 @@ void Multi_UAV::UpdateTracker(const double &lidar_end_time, const int &id, const
 bool Multi_UAV::DeleteInvalidTemporaryTracker(const double &lidar_end_time, const int &index) {
     double update_dt = lidar_end_time - temp_tracker[index].dyn_tracker.last_update_time_;
     double exist_dt = lidar_end_time - temp_tracker[index].create_time;
-    if (update_dt > 2.0) {   //2s没有更新，删除
+    if (update_dt > temp_tracker_lost_timeout) {
         cout << YELLOW << " -- [Delete Temporary Tracker " << index << "] This object is NOT teammate!" << RESET << endl;
         VisualizeTempTrackerDelete(lidar_end_time, index);
         temp_tracker.erase(temp_tracker.begin() + index);
@@ -1075,46 +1190,71 @@ bool Multi_UAV::TrajMatching(vector<Vector3d> &dyn_positions,
     if (dyn_positions.size() != uav_positions.size() || dyn_positions.size() < 5)
         return false;
 
-    Eigen::Vector2d dyn_mean = Eigen::Vector2d::Zero();
-    Eigen::Vector2d uav_mean = Eigen::Vector2d::Zero();
-    for (size_t i = 0; i < dyn_positions.size(); ++i) {
-        dyn_mean += dyn_positions[i].head<2>();
-        uav_mean += uav_positions[i].head<2>();
-    }
-    dyn_mean /= double(dyn_positions.size());
-    uav_mean /= double(uav_positions.size());
-
-    Eigen::Matrix2d H = Eigen::Matrix2d::Zero();
-    for (size_t i = 0; i < dyn_positions.size(); ++i) {
-        H += (uav_positions[i].head<2>() - uav_mean) * (dyn_positions[i].head<2>() - dyn_mean).transpose();
-    }
-
-    Eigen::JacobiSVD<Eigen::Matrix2d> svd(H, Eigen::ComputeFullU | Eigen::ComputeFullV);
-
-    Eigen::Matrix2d mirror = Eigen::Matrix2d::Identity();
-    mirror(1, 1) = (svd.matrixV() * svd.matrixU().transpose()).determinant();
-
-    const Eigen::Matrix2d R2 = svd.matrixV() * mirror * svd.matrixU().transpose();
-    const double yaw = std::atan2(R2(1, 0), R2(0, 0));
-    Rot = rotz(yaw);
-
-    const Eigen::Vector2d t2 = dyn_mean - R2 * uav_mean;
-    trans = V3D(t2(0), t2(1), 0.0);
-
-    double total_match_err = 0.0;
-    for (size_t i = 0; i < dyn_positions.size(); ++i) {
-        const Eigen::Vector2d e = dyn_positions[i].head<2>() - R2 * uav_positions[i].head<2>() - t2;
-        total_match_err += e.norm();
-    }
-
-    const double ave_match_err = total_match_err / double(dyn_positions.size());
-    cout << " -- [Trajectory Match] Average Matching Error: " << ave_match_err << endl;
-
-    if (ave_match_err > ave_match_error_thresh)
+    swarm_lio::TrajectoryAlignmentResult result;
+    const bool solved = use_legacy_se2_extrinsics_
+        ? swarm_lio::solveTrajectoryAlignmentSE2Legacy(
+              dyn_positions, uav_positions, result)
+        : swarm_lio::solveTrajectoryAlignmentSE3(
+              dyn_positions, uav_positions, result);
+    if (!solved)
         return false;
 
-    const double denom = std::max(1e-12, svd.singularValues()(0) * svd.singularValues()(1));
-    Coeff = ave_match_err / denom * 1000.0;
+    if (!use_legacy_se2_extrinsics_ &&
+        gravity_constrained_extrinsic_rotation_) {
+        const auto teammate = teammates.find(id);
+        if (teammate != teammates.end()) {
+            const V3D teammate_gravity_euler_rad =
+                teammate->second.world_to_gravity_deg / 57.3;
+            const M3D teammate_world_to_gravity =
+                EulerToRotM(teammate_gravity_euler_rad);
+            result.rotation = swarm_lio::constrainRotationWithGravity(
+                result.rotation,
+                rot_world_to_gravity,
+                teammate_world_to_gravity);
+
+            V3D observed_mean = Zero3d;
+            V3D teammate_mean = Zero3d;
+            for (std::size_t i = 0; i < dyn_positions.size(); ++i) {
+                observed_mean += dyn_positions[i];
+                teammate_mean += uav_positions[i];
+            }
+            observed_mean /= static_cast<double>(dyn_positions.size());
+            teammate_mean /= static_cast<double>(uav_positions.size());
+            result.translation =
+                observed_mean - result.rotation * teammate_mean;
+
+            double total_error = 0.0;
+            for (std::size_t i = 0; i < dyn_positions.size(); ++i) {
+                total_error +=
+                    (dyn_positions[i] -
+                     result.rotation * uav_positions[i] -
+                     result.translation)
+                        .norm();
+            }
+            result.mean_error =
+                total_error / static_cast<double>(dyn_positions.size());
+        }
+    }
+
+    Rot = result.rotation;
+    trans = result.translation;
+    Coeff = result.coefficient;
+    cout << " -- [Trajectory Match "
+         << (use_legacy_se2_extrinsics_ ? "legacy SE2" : "SE3")
+         << "] Average Matching Error: " << result.mean_error << endl;
+
+    if (result.mean_error > ave_match_error_thresh)
+        return false;
+    const double match_yaw_deg = fabs(yaw_from_rot(Rot)) * 57.3;
+    if (max_abs_match_yaw_deg >= 0.0 &&
+        match_yaw_deg > max_abs_match_yaw_deg) {
+        cout << BOLDYELLOW
+             << " -- [Trajectory Match] Reject yaw " << match_yaw_deg
+             << " deg > configured initial-heading gate "
+             << max_abs_match_yaw_deg << " deg" << RESET << endl;
+        return false;
+    }
+
     return true;
 }
 
@@ -1122,23 +1262,20 @@ bool Multi_UAV::CreateTeammateTracker(const double &lidar_end_time, const int &i
                                       StatesGroup &state_prop, const bool &print_log) {
     auto dyn_pos_time = temp_tracker[index].dyn_pos_time;
     //Assess if the tracker's trajectory is excited enough
-    Eigen::Vector2d dyn_mean = Eigen::Vector2d::Zero();
-    for (size_t i = 0; i < dyn_pos_time.size(); ++i)
-        dyn_mean += dyn_pos_time[i].block<2, 1>(0, 0);
-    dyn_mean /= double(dyn_pos_time.size());
-
-    Eigen::Matrix2d H = Eigen::Matrix2d::Zero();
-    for (size_t i = 0; i < dyn_pos_time.size(); ++i) {
-        const Eigen::Vector2d d = dyn_pos_time[i].block<2, 1>(0, 0) - dyn_mean;
-        H += d * d.transpose();
-    }
-
-    Eigen::JacobiSVD<Eigen::Matrix2d> svd(H, Eigen::ComputeFullU | Eigen::ComputeFullV);
-    double second_large_singular_value = svd.singularValues()(1);
+    vector<V3D> excitation_positions;
+    excitation_positions.reserve(dyn_pos_time.size());
+    for (const auto& pos_time : dyn_pos_time)
+        excitation_positions.push_back(pos_time.head<3>());
+    const double second_large_singular_value =
+        use_legacy_se2_extrinsics_
+            ? swarm_lio::trajectoryExcitationSE2Legacy(excitation_positions)
+            : swarm_lio::trajectoryExcitationSE3(excitation_positions);
 
 
     if(print_log && second_large_singular_value > 1)
-        cout << " -- [Temp " << temp_tracker[index].id << "] Trajectory Matching Threshold = " << BOLDYELLOW
+        cout << " -- [Temp " << temp_tracker[index].id << "] "
+             << (use_legacy_se2_extrinsics_ ? "SE2" : "SE3")
+             << " Trajectory Matching Threshold = " << BOLDYELLOW
              << second_large_singular_value
              << RESET << endl;
 
@@ -1151,21 +1288,18 @@ bool Multi_UAV::CreateTeammateTracker(const double &lidar_end_time, const int &i
                 continue;
             else {
                 vector<V3D> dyn_pos, uav_pos;
-                auto temp_dyn_pose = temp_tracker[index].dyn_pos_time;
-                dyn_pos.clear();
-                uav_pos.clear();
-                for (int i = 0; i < iter->second.teammate_odom_time.size(); ++i) {  //队友的每个odom (200)
-                    while (!temp_dyn_pose.empty() &&
-                           temp_dyn_pose.front()(3) < iter->second.teammate_odom_time[i](3)) {
-                        temp_dyn_pose.pop_front();
-                    }
-                    //找到与收到的队友轨迹时间戳最接近的观测轨迹
-                    if (abs(temp_dyn_pose.front()(3) - iter->second.teammate_odom_time[i](3)) < 1e-5) {
-                        dyn_pos.push_back(temp_dyn_pose.front().head(3));
-                        uav_pos.push_back(iter->second.teammate_odom_time[i].head(3));
-                        continue;
-                    }
-                }
+                const auto &temp_dyn_pose =
+                    temp_tracker[index].dyn_pos_time;
+                const vector<Eigen::Vector4d> observed_timed(
+                    temp_dyn_pose.begin(), temp_dyn_pose.end());
+                const vector<Eigen::Vector4d> teammate_timed(
+                    iter->second.teammate_odom_time.begin(),
+                    iter->second.teammate_odom_time.end());
+                double max_used_time_delta = 0.0;
+                swarm_lio::associateNearestTimedPositions(
+                    observed_timed, teammate_timed,
+                    traj_matching_time_tolerance,
+                    dyn_pos, uav_pos, &max_used_time_delta);
 
                 if (dyn_pos.size() < 50)
                     break;
@@ -1174,10 +1308,14 @@ bool Multi_UAV::CreateTeammateTracker(const double &lidar_end_time, const int &i
                 V3D trans = Zero3d;
                 double noise = 1e-5;
                 cout << BOLDBLUE << " -- [Trajectory Matching] with Drone " << id << RESET << endl;
+                cout << " -- [Trajectory Matching] synchronized samples: "
+                     << dyn_pos.size() << ", max |dt|: "
+                     << max_used_time_delta << " s" << endl;
 
 
                 if (TrajMatching(dyn_pos, uav_pos, rot, trans, noise, id)) {
-                    project_extrinsic_se2(rot, trans);
+                    if (use_legacy_se2_extrinsics_)
+                        project_extrinsic_se2(rot, trans);
                     cout << BOLDMAGENTA << "R: " << RotMtoEuler(rot).transpose() * 57.3 << " deg" << endl
                          << "t: " << trans.transpose() << " m" << RESET << endl;
                     state.global_extrinsic_rot[id] = state_prop.global_extrinsic_rot[id] = rot;
@@ -1264,11 +1402,17 @@ void Multi_UAV::CheckTempClusterValidation(const int &index) {
 }
 
 void Multi_UAV::PredictTemporaryTracker(const double &lidar_end_time, const int &index) {
-    temp_tracker[index].dyn_tracker.predict(lidar_end_time);
+    const double unseen_duration =
+        lidar_end_time - temp_tracker[index].dyn_tracker.last_update_time_;
+    if (temp_tracker_prediction_horizon <= 0.0 ||
+        unseen_duration <= temp_tracker_prediction_horizon)
+        temp_tracker[index].dyn_tracker.predict(lidar_end_time);
 }
 
 void Multi_UAV::UpdateTemporaryTracker(const double &lidar_end_time, const int &index, const bool &print_log) {
     double cluster_update_dt = lidar_end_time - temp_tracker[index].dyn_tracker.last_update_time_;
+    const bool has_measurement = temp_tracker[index].exist_meas;
+    V3D trajectory_position = temp_tracker[index].dyn_tracker.get_state_pos();
     if (temp_tracker[index].exist_meas) {
         //Update EKF tracker
         Matrix<double, 6, 1> ekf_meas;
@@ -1282,11 +1426,27 @@ void Multi_UAV::UpdateTemporaryTracker(const double &lidar_end_time, const int &
         temp_tracker[index].dyn_tracker.set_H_vel(Matrix3d::Zero());
         temp_tracker[index].dyn_tracker.update(ekf_meas, 1, lidar_end_time, 0.001);
         temp_tracker[index].dyn_tracker.last_update_time_ = lidar_end_time;
+        // The temporary EKF is valuable for data association, but its filtered
+        // position lags a moving teammate.  For time-synchronised trajectory
+        // alignment, retain the current lidar measurement instead when
+        // explicitly configured.  Translation absorbs the beacon's fixed
+        // body offset; avoiding temporal lag reduces the SE(3) residual.
+        if (use_raw_temp_measurement_for_traj_matching_)
+            trajectory_position = ekf_meas.head(3);
+        else
+            trajectory_position = temp_tracker[index].dyn_tracker.get_state_pos();
+    } else {
+        trajectory_position = temp_tracker[index].dyn_tracker.get_state_pos();
     }
+    // Sparse simulated scans can miss a distant beacon for several frames.
+    // Keep predicting it for association, but do not let prediction-only
+    // samples masquerade as lidar observations in the SE(3) alignment.
+    if (trajectory_samples_require_measurement_ && !has_measurement)
+        return;
     if (temp_tracker[index].dyn_pos_time.size() >= pos_num_in_traj)
         temp_tracker[index].dyn_pos_time.pop_front();
     Vector4d pos_time;
-    pos_time.block<3, 1>(0, 0) = temp_tracker[index].dyn_tracker.get_state_pos();
+    pos_time.block<3, 1>(0, 0) = trajectory_position;
     pos_time(3) = lidar_end_time;
     temp_tracker[index].dyn_pos_time.push_back(pos_time);
 }
@@ -1390,10 +1550,8 @@ void Multi_UAV::VisualizeDeleteAllCluster(const double &time) {
 }
 
 void Multi_UAV::PublishTeammateOdom(const double &lidar_end_time){
-    cout << BOLDREDPURPLE << " -- [Teammate List] ";
     for (auto iter = teammate_tracker.begin(); iter != teammate_tracker.end(); ++iter){
         int teammate_id = iter->first;
-        cout << teammate_id << "  ";
         if(pubTeammateOdom[teammate_id]->get_subscription_count() < 1)
             continue;
 
@@ -1424,7 +1582,6 @@ void Multi_UAV::PublishTeammateOdom(const double &lidar_end_time){
         TeammateOdom.twist.twist.linear.z = teammate_vel_gravity(2);
         pubTeammateOdom[teammate_id]->publish(TeammateOdom);
     }
-    cout << RESET << endl;
 }
 
 void Multi_UAV::PublishConnectedTeammateList(const double &lidar_end_time){
@@ -1551,7 +1708,6 @@ void Multi_UAV::VisualizeTeammateTrajectory(const rclcpp::Publisher<visualizatio
 
 //    traj.push_back(Vector4d(position.x(), position.y(), position.z(), has_observation));
     traj.push_back(Vector4d(position.x(), position.y(), position.z(), 1.0));
-    cout << " Teammate traj.size() "<< traj.size() << endl;
     last_pos = traj[0].head(3);
     int cnt = 0;
     for (auto cur_index: traj) {
@@ -1626,7 +1782,6 @@ void Multi_UAV::VisualizeTeammateTrajectorySphere(const rclcpp::Publisher<visual
 
 //    traj.push_back(Vector4d(position.x(), position.y(), position.z(), has_observation));
     traj.push_back(Vector4d(position.x(), position.y(), position.z(), 1.0));
-    cout << " Teammate traj.size() "<< traj.size() << endl;
     last_pos = traj[0].head(3);
     int cnt = 0;
     for (auto cur_index: traj) {
@@ -1901,4 +2056,3 @@ void Multi_UAV::VisualizeRectangle(const rclcpp::Publisher<visualization_msgs::m
     line_strip.points.push_back(p[4]);
     pub_rect->publish(line_strip);
 }
-

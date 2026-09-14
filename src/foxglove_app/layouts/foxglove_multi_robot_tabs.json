@@ -1,0 +1,1126 @@
+{
+  "configById": {
+    "Tab!robots": {
+      "activeTabIdx": 0,
+      "tabs": [
+        {
+          "title": "bot1",
+          "layout": {
+            "first": "3D!bot1",
+            "second": {
+              "first": {
+                "first": "foxglove-teleop-twist-keyboard.Teleop Twist!bot1-kbd",
+                "second": "virtual-joystick.Virtual Joystick!bot1-joy",
+                "direction": "row"
+              },
+              "second": {
+                "first": "Plot!bot1-accel",
+                "second": "Plot!bot1-gyro",
+                "direction": "column"
+              },
+              "direction": "column",
+              "splitPercentage": 28
+            },
+            "direction": "row",
+            "splitPercentage": 63
+          }
+        },
+        {
+          "title": "bot2",
+          "layout": {
+            "first": "3D!bot2",
+            "second": {
+              "first": {
+                "first": "foxglove-teleop-twist-keyboard.Teleop Twist!bot2-kbd",
+                "second": "virtual-joystick.Virtual Joystick!bot2-joy",
+                "direction": "row"
+              },
+              "second": {
+                "first": "Plot!bot2-accel",
+                "second": "Plot!bot2-gyro",
+                "direction": "column"
+              },
+              "direction": "column",
+              "splitPercentage": 28
+            },
+            "direction": "row",
+            "splitPercentage": 63
+          }
+        },
+        {
+          "title": "bot3",
+          "layout": {
+            "first": "3D!bot3",
+            "second": {
+              "first": {
+                "first": "foxglove-teleop-twist-keyboard.Teleop Twist!bot3-kbd",
+                "second": "virtual-joystick.Virtual Joystick!bot3-joy",
+                "direction": "row"
+              },
+              "second": {
+                "first": "Plot!bot3-accel",
+                "second": "Plot!bot3-gyro",
+                "direction": "column"
+              },
+              "direction": "column",
+              "splitPercentage": 28
+            },
+            "direction": "row",
+            "splitPercentage": 63
+          }
+        },
+        {
+          "title": "bot4",
+          "layout": {
+            "first": "3D!bot4",
+            "second": {
+              "first": {
+                "first": "foxglove-teleop-twist-keyboard.Teleop Twist!bot4-kbd",
+                "second": "virtual-joystick.Virtual Joystick!bot4-joy",
+                "direction": "row"
+              },
+              "second": {
+                "first": "Plot!bot4-accel",
+                "second": "Plot!bot4-gyro",
+                "direction": "column"
+              },
+              "direction": "column",
+              "splitPercentage": 28
+            },
+            "direction": "row",
+            "splitPercentage": 63
+          }
+        },
+        {
+          "title": "bot5",
+          "layout": {
+            "first": "3D!bot5",
+            "second": {
+              "first": {
+                "first": "foxglove-teleop-twist-keyboard.Teleop Twist!bot5-kbd",
+                "second": "virtual-joystick.Virtual Joystick!bot5-joy",
+                "direction": "row"
+              },
+              "second": {
+                "first": "Plot!bot5-accel",
+                "second": "Plot!bot5-gyro",
+                "direction": "column"
+              },
+              "direction": "column",
+              "splitPercentage": 28
+            },
+            "direction": "row",
+            "splitPercentage": 63
+          }
+        }
+      ]
+    },
+    "3D!bot1": {
+      "followMode": "follow-pose",
+      "followTf": "bot1/world",
+      "scene": {
+        "backgroundColor": "#282828",
+        "syncCamera": false,
+        "transforms": {
+          "labelSize": 0.07,
+          "axisSize": 0.1,
+          "lineWidth": 2,
+          "editable": false,
+          "showLabel": true
+        }
+      },
+      "cameraState": {
+        "perspective": true,
+        "distance": 4.7,
+        "phi": 53,
+        "thetaOffset": 160,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "transforms": {
+        "frame:bot1/caster_link": {
+          "visible": false
+        },
+        "frame:bot1/caster2_link": {
+          "visible": false
+        },
+        "frame:bot1/base_link": {
+          "visible": false
+        },
+        "frame:bot1/imu_link": {
+          "visible": true
+        },
+        "frame:bot1/lidar_link": {
+          "visible": false
+        },
+        "frame:bot1/world": {
+          "visible": true
+        }
+      },
+      "topics": {
+        "/bot1/lidar_points/points": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "gradient",
+          "colorMap": "rainbow",
+          "pointSize": 3,
+          "gradient": [
+            "#c19898ff",
+            "#13ff00ff"
+          ]
+        }
+      },
+      "layers": {
+        "bot1-grid": {
+          "visible": true,
+          "drawBehind": false,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "bot1-grid",
+          "layerId": "foxglove.Grid",
+          "frameId": "map_origin",
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#68b1ffff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "order": 0
+        },
+        "bot1-urdf": {
+          "displayMode": "auto",
+          "fallbackColor": "#ff0000",
+          "showAxis": false,
+          "axisScale": 1,
+          "showOutlines": true,
+          "opacity": 0.52,
+          "visible": true,
+          "frameLocked": true,
+          "instanceId": "bot1-urdf",
+          "label": "URDF",
+          "layerId": "foxglove.Urdf",
+          "sourceType": "topic",
+          "topic": "/bot1/robot_description",
+          "parameter": "",
+          "url": "",
+          "filePath": "",
+          "framePrefix": "bot1/",
+          "order": 1,
+          "links": {}
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/bot1/move_base_simple/goal",
+        "pointTopic": "/bot1/clicked_point",
+        "poseEstimateTopic": "/bot1/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
+    },
+    "foxglove-teleop-twist-keyboard.Teleop Twist!bot1-kbd": {
+      "publishRate": 10,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/bot1/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+    "virtual-joystick.Virtual Joystick!bot1-joy": {
+      "publishRate": 15,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/bot1/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+    "Plot!bot1-accel": {
+      "title": "bot1 IMU Linear Accel",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot1/imu.linear_acceleration.x",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot1/imu.linear_acceleration.y",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot1/imu.linear_acceleration.z",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+    "Plot!bot1-gyro": {
+      "title": "bot1 IMU Angular Vel",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot1/imu.angular_velocity.x",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot1/imu.angular_velocity.y",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot1/imu.angular_velocity.z",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+    "3D!bot2": {
+      "followMode": "follow-pose",
+      "followTf": "bot2/world",
+      "scene": {
+        "backgroundColor": "#282828",
+        "syncCamera": false,
+        "transforms": {
+          "labelSize": 0.07,
+          "axisSize": 0.1,
+          "lineWidth": 2,
+          "editable": false,
+          "showLabel": true
+        }
+      },
+      "cameraState": {
+        "perspective": true,
+        "distance": 4.7,
+        "phi": 53,
+        "thetaOffset": 160,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "transforms": {
+        "frame:bot2/caster_link": {
+          "visible": false
+        },
+        "frame:bot2/caster2_link": {
+          "visible": false
+        },
+        "frame:bot2/base_link": {
+          "visible": false
+        },
+        "frame:bot2/imu_link": {
+          "visible": true
+        },
+        "frame:bot2/lidar_link": {
+          "visible": false
+        },
+        "frame:bot2/world": {
+          "visible": true
+        }
+      },
+      "topics": {
+        "/bot2/lidar_points/points": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "gradient",
+          "colorMap": "rainbow",
+          "pointSize": 3,
+          "gradient": [
+            "#c19898ff",
+            "#13ff00ff"
+          ]
+        }
+      },
+      "layers": {
+        "bot2-grid": {
+          "visible": true,
+          "drawBehind": false,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "bot2-grid",
+          "layerId": "foxglove.Grid",
+          "frameId": "map_origin",
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#68b1ffff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "order": 0
+        },
+        "bot2-urdf": {
+          "displayMode": "auto",
+          "fallbackColor": "#ff0000",
+          "showAxis": false,
+          "axisScale": 1,
+          "showOutlines": true,
+          "opacity": 0.52,
+          "visible": true,
+          "frameLocked": true,
+          "instanceId": "bot2-urdf",
+          "label": "URDF",
+          "layerId": "foxglove.Urdf",
+          "sourceType": "topic",
+          "topic": "/bot2/robot_description",
+          "parameter": "",
+          "url": "",
+          "filePath": "",
+          "framePrefix": "bot2/",
+          "order": 1,
+          "links": {}
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/bot2/move_base_simple/goal",
+        "pointTopic": "/bot2/clicked_point",
+        "poseEstimateTopic": "/bot2/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
+    },
+    "foxglove-teleop-twist-keyboard.Teleop Twist!bot2-kbd": {
+      "publishRate": 10,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/bot2/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+    "virtual-joystick.Virtual Joystick!bot2-joy": {
+      "publishRate": 15,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/bot2/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+    "Plot!bot2-accel": {
+      "title": "bot2 IMU Linear Accel",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot2/imu.linear_acceleration.x",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot2/imu.linear_acceleration.y",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot2/imu.linear_acceleration.z",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+    "Plot!bot2-gyro": {
+      "title": "bot2 IMU Angular Vel",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot2/imu.angular_velocity.x",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot2/imu.angular_velocity.y",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot2/imu.angular_velocity.z",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+    "3D!bot3": {
+      "followMode": "follow-pose",
+      "followTf": "bot3/world",
+      "scene": {
+        "backgroundColor": "#282828",
+        "syncCamera": false,
+        "transforms": {
+          "labelSize": 0.07,
+          "axisSize": 0.1,
+          "lineWidth": 2,
+          "editable": false,
+          "showLabel": true
+        }
+      },
+      "cameraState": {
+        "perspective": true,
+        "distance": 4.7,
+        "phi": 53,
+        "thetaOffset": 160,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "transforms": {
+        "frame:bot3/caster_link": {
+          "visible": false
+        },
+        "frame:bot3/caster2_link": {
+          "visible": false
+        },
+        "frame:bot3/base_link": {
+          "visible": false
+        },
+        "frame:bot3/imu_link": {
+          "visible": true
+        },
+        "frame:bot3/lidar_link": {
+          "visible": false
+        },
+        "frame:bot3/world": {
+          "visible": true
+        }
+      },
+      "topics": {
+        "/bot3/lidar_points/points": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "gradient",
+          "colorMap": "rainbow",
+          "pointSize": 3,
+          "gradient": [
+            "#c19898ff",
+            "#13ff00ff"
+          ]
+        }
+      },
+      "layers": {
+        "bot3-grid": {
+          "visible": true,
+          "drawBehind": false,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "bot3-grid",
+          "layerId": "foxglove.Grid",
+          "frameId": "map_origin",
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#68b1ffff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "order": 0
+        },
+        "bot3-urdf": {
+          "displayMode": "auto",
+          "fallbackColor": "#ff0000",
+          "showAxis": false,
+          "axisScale": 1,
+          "showOutlines": true,
+          "opacity": 0.52,
+          "visible": true,
+          "frameLocked": true,
+          "instanceId": "bot3-urdf",
+          "label": "URDF",
+          "layerId": "foxglove.Urdf",
+          "sourceType": "topic",
+          "topic": "/bot3/robot_description",
+          "parameter": "",
+          "url": "",
+          "filePath": "",
+          "framePrefix": "bot3/",
+          "order": 1,
+          "links": {}
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/bot3/move_base_simple/goal",
+        "pointTopic": "/bot3/clicked_point",
+        "poseEstimateTopic": "/bot3/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
+    },
+    "foxglove-teleop-twist-keyboard.Teleop Twist!bot3-kbd": {
+      "publishRate": 10,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/bot3/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+    "virtual-joystick.Virtual Joystick!bot3-joy": {
+      "publishRate": 15,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/bot3/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+    "Plot!bot3-accel": {
+      "title": "bot3 IMU Linear Accel",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot3/imu.linear_acceleration.x",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot3/imu.linear_acceleration.y",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot3/imu.linear_acceleration.z",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+    "Plot!bot3-gyro": {
+      "title": "bot3 IMU Angular Vel",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot3/imu.angular_velocity.x",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot3/imu.angular_velocity.y",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot3/imu.angular_velocity.z",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+    "3D!bot4": {
+      "followMode": "follow-pose",
+      "followTf": "bot4/world",
+      "scene": {
+        "backgroundColor": "#282828",
+        "syncCamera": false,
+        "transforms": {
+          "labelSize": 0.07,
+          "axisSize": 0.1,
+          "lineWidth": 2,
+          "editable": false,
+          "showLabel": true
+        }
+      },
+      "cameraState": {
+        "perspective": true,
+        "distance": 4.7,
+        "phi": 53,
+        "thetaOffset": 160,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "transforms": {
+        "frame:bot4/caster_link": {
+          "visible": false
+        },
+        "frame:bot4/caster2_link": {
+          "visible": false
+        },
+        "frame:bot4/base_link": {
+          "visible": false
+        },
+        "frame:bot4/imu_link": {
+          "visible": true
+        },
+        "frame:bot4/lidar_link": {
+          "visible": false
+        },
+        "frame:bot4/world": {
+          "visible": true
+        }
+      },
+      "topics": {
+        "/bot4/lidar_points/points": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "gradient",
+          "colorMap": "rainbow",
+          "pointSize": 3,
+          "gradient": [
+            "#c19898ff",
+            "#13ff00ff"
+          ]
+        }
+      },
+      "layers": {
+        "bot4-grid": {
+          "visible": true,
+          "drawBehind": false,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "bot4-grid",
+          "layerId": "foxglove.Grid",
+          "frameId": "map_origin",
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#68b1ffff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "order": 0
+        },
+        "bot4-urdf": {
+          "displayMode": "auto",
+          "fallbackColor": "#ff0000",
+          "showAxis": false,
+          "axisScale": 1,
+          "showOutlines": true,
+          "opacity": 0.52,
+          "visible": true,
+          "frameLocked": true,
+          "instanceId": "bot4-urdf",
+          "label": "URDF",
+          "layerId": "foxglove.Urdf",
+          "sourceType": "topic",
+          "topic": "/bot4/robot_description",
+          "parameter": "",
+          "url": "",
+          "filePath": "",
+          "framePrefix": "bot4/",
+          "order": 1,
+          "links": {}
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/bot4/move_base_simple/goal",
+        "pointTopic": "/bot4/clicked_point",
+        "poseEstimateTopic": "/bot4/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
+    },
+    "foxglove-teleop-twist-keyboard.Teleop Twist!bot4-kbd": {
+      "publishRate": 10,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/bot4/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+    "virtual-joystick.Virtual Joystick!bot4-joy": {
+      "publishRate": 15,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/bot4/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+    "Plot!bot4-accel": {
+      "title": "bot4 IMU Linear Accel",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot4/imu.linear_acceleration.x",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot4/imu.linear_acceleration.y",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot4/imu.linear_acceleration.z",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+    "Plot!bot4-gyro": {
+      "title": "bot4 IMU Angular Vel",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot4/imu.angular_velocity.x",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot4/imu.angular_velocity.y",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot4/imu.angular_velocity.z",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+    "3D!bot5": {
+      "followMode": "follow-pose",
+      "followTf": "bot5/world",
+      "scene": {
+        "backgroundColor": "#282828",
+        "syncCamera": false,
+        "transforms": {
+          "labelSize": 0.07,
+          "axisSize": 0.1,
+          "lineWidth": 2,
+          "editable": false,
+          "showLabel": true
+        }
+      },
+      "cameraState": {
+        "perspective": true,
+        "distance": 4.7,
+        "phi": 53,
+        "thetaOffset": 160,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "transforms": {
+        "frame:bot5/caster_link": {
+          "visible": false
+        },
+        "frame:bot5/caster2_link": {
+          "visible": false
+        },
+        "frame:bot5/base_link": {
+          "visible": false
+        },
+        "frame:bot5/imu_link": {
+          "visible": true
+        },
+        "frame:bot5/lidar_link": {
+          "visible": false
+        },
+        "frame:bot5/world": {
+          "visible": true
+        }
+      },
+      "topics": {
+        "/bot5/lidar_points/points": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "gradient",
+          "colorMap": "rainbow",
+          "pointSize": 3,
+          "gradient": [
+            "#c19898ff",
+            "#13ff00ff"
+          ]
+        }
+      },
+      "layers": {
+        "bot5-grid": {
+          "visible": true,
+          "drawBehind": false,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "bot5-grid",
+          "layerId": "foxglove.Grid",
+          "frameId": "map_origin",
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#68b1ffff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "order": 0
+        },
+        "bot5-urdf": {
+          "displayMode": "auto",
+          "fallbackColor": "#ff0000",
+          "showAxis": false,
+          "axisScale": 1,
+          "showOutlines": true,
+          "opacity": 0.52,
+          "visible": true,
+          "frameLocked": true,
+          "instanceId": "bot5-urdf",
+          "label": "URDF",
+          "layerId": "foxglove.Urdf",
+          "sourceType": "topic",
+          "topic": "/bot5/robot_description",
+          "parameter": "",
+          "url": "",
+          "filePath": "",
+          "framePrefix": "bot5/",
+          "order": 1,
+          "links": {}
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/bot5/move_base_simple/goal",
+        "pointTopic": "/bot5/clicked_point",
+        "poseEstimateTopic": "/bot5/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
+    },
+    "foxglove-teleop-twist-keyboard.Teleop Twist!bot5-kbd": {
+      "publishRate": 10,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/bot5/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+    "virtual-joystick.Virtual Joystick!bot5-joy": {
+      "publishRate": 15,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/bot5/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+    "Plot!bot5-accel": {
+      "title": "bot5 IMU Linear Accel",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot5/imu.linear_acceleration.x",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot5/imu.linear_acceleration.y",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot5/imu.linear_acceleration.z",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+    "Plot!bot5-gyro": {
+      "title": "bot5 IMU Angular Vel",
+      "paths": [
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot5/imu.angular_velocity.x",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot5/imu.angular_velocity.y",
+          "enabled": true
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/bot5/imu.angular_velocity.z",
+          "enabled": true
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "linkedGlobalVariables": [],
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": "Tab!robots"
+}

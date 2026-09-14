@@ -1,0 +1,41 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Plane Cell Count: 60
+      Cell Size: 1
+      Color: 80; 88; 102
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Exact Gazebo environment
+      Enabled: true
+      Topic:
+        Value: /racer_replay/v41/environment_ground_truth
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+        Depth: 1
+  Global Options:
+    Fixed Frame: map
+    Background Color: 16; 20; 28
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 82
+      Focal Point: {X: 25, Y: 25, Z: 23}
+      Pitch: 0.48
+      Yaw: 0.80
+      Target Frame: map
+Window Geometry:
+  Height: 900
+  Width: 1100
+  X: 1120
+  Y: 30

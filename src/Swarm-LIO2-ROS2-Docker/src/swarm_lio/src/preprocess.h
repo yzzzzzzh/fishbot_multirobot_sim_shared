@@ -75,6 +75,28 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(ouster_ros::Point,
     (std::uint32_t, range, range)
 )
 
+// Unitree L1/L2 (unilidar_sdk ROS2 driver): x,y,z,intensity,ring(uint16),time(float, s
+// relative to the cloud stamp).  Same field names/types as velodyne_ros::Point so
+// pcl::fromROSMsg maps by name; kept separate so the handler can fall back to an
+// index-uniform time model for this non-repetitive scanner.
+namespace unilidar_ros {
+    struct EIGEN_ALIGN16 Point {
+        PCL_ADD_POINT4D;
+        float intensity;
+        uint16_t ring;
+        float time;
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    };
+}  // namespace unilidar_ros
+POINT_CLOUD_REGISTER_POINT_STRUCT(unilidar_ros::Point,
+        (float, x, x)
+        (float, y, y)
+        (float, z, z)
+        (float, intensity, intensity)
+        (std::uint16_t, ring, ring)
+        (float, time, time)
+)
+
 // namespace pandar_ros
 namespace pandar_ros {
     struct EIGEN_ALIGN16 Point {
@@ -120,6 +142,7 @@ class Preprocess
   private:
   void oust_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void velodyne_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
+  void unilidar_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void l515_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void sim_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg);
   void give_feature(PointCloudXYZI &pl, vector<orgtype> &types);

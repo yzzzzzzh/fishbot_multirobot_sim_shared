@@ -75,6 +75,14 @@ add_executable(swarm_lio
         src/MultiUAV.cpp
         )
 
+add_executable(trajectory_alignment_self_test
+        test/trajectory_alignment_self_test.cpp
+        )
+target_include_directories(trajectory_alignment_self_test PRIVATE
+  ${EIGEN3_INCLUDE_DIR}
+  include
+)
+
 ament_target_dependencies(swarm_lio
   rclcpp
   geometry_msgs
@@ -106,6 +114,10 @@ target_include_directories(swarm_lio PRIVATE
 )
 
 install(TARGETS swarm_lio
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(TARGETS trajectory_alignment_self_test
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -1,0 +1,18 @@
+nvblox_node:
+  ros__parameters:
+    use_sim_time: true
+
+    # Build TSDF/ESDF in the same frame as the fused map
+    global_frame: "map_origin"
+
+    # Point cloud input (already in global frame)
+    pointcloud_topic: "/global_downsampled_map"
+    use_tf_transforms: false  # pointcloud already aligned to global frame
+
+    # Map resolution
+    voxel_size: 0.05  # 5 cm voxels
+
+    # LiDAR-only pipeline
+    use_lidar: true
+    use_depth: false
+    use_color: false

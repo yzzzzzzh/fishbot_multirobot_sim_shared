@@ -1,0 +1,110 @@
+robot:
+  base_name: quad_mid360
+  laser_retro: 5000.0
+  # frames -- same names as fishbot_v2_3d so downstream configs are unchanged
+  base_frame: base_link
+  lidar_frame: lidar_link
+  imu_frame: imu_link
+  odom_frame: odom
+  # topics -- identical layout to fishbot_v2_3d
+  lidar_pub: lidar_points
+  imu_pub: imu
+
+# Physical parameters taken from the OpenRobotics X3 UAV (Fuel model 6).
+# Geometry is re-authored with primitives instead of the Fuel .dae meshes so the
+# model resolves offline -- the mesh URIs are https:// and would need Fuel at
+# spawn time. Collision shapes and all inertial values match the original.
+geometry:
+  base:
+    size_x: 0.47
+    size_y: 0.47
+    size_z: 0.11
+    mass: 1.5
+    inertia:
+      ixx: 0.0347563
+      iyy: 0.07
+      izz: 0.0977
+  rotor:
+    radius: 0.1
+    length: 0.005
+    mass: 0.005
+    inertia:
+      ixx: 9.75e-07
+      iyy: 4.17041e-05
+      izz: 4.26041e-05
+    # X3 rotor layout. spin: +1 = ccw, -1 = cw (rotorConfiguration <direction>)
+    arms:
+      - {name: rotor_0, x: 0.13,  y: -0.22, z: 0.023, turn: ccw, spin: 1}
+      - {name: rotor_1, x: -0.13, y: 0.20,  z: 0.023, turn: ccw, spin: 1}
+      - {name: rotor_2, x: 0.13,  y: 0.22,  z: 0.023, turn: cw,  spin: -1}
+      - {name: rotor_3, x: -0.13, y: -0.20, z: 0.023, turn: cw,  spin: -1}
+  sensor_mass: 0.01
+  sensor_inertia: 1.0e-05
+
+# Sensor mounting heights, relative to base_link origin.
+# CRITICAL: lidar_z - imu_z must stay 0.095 m. Swarm-LIO2's simulation.yaml
+# uses LI_extrinsic_T: [0, 0, +0.095], i.e. the LiDAR origin expressed in the
+# IMU frame. Keeping the same offset keeps the SLAM and sensor model aligned.
+mount:
+  lidar_z: 0.150
+  imu_z: 0.055
+  # base_link centre height when resting on the ground (X3 model pose z)
+  rest_z: 0.055
+
+plugins:
+  motor:
+    time_constant_up: 0.0125
+    time_constant_down: 0.025
+    max_rot_velocity: 800.0
+    motor_constant: 8.54858e-06
+    moment_constant: 0.016
+    rotor_drag_coefficient: 8.06428e-05
+    rolling_moment_coefficient: 1.0e-06
+    rotor_velocity_slowdown_sim: 10
+  # Gains copied verbatim from the tuned example world
+  # /usr/share/ignition/ignition-gazebo6/worlds/multicopter_velocity_control.sdf
+  velocity_control:
+    velocity_gain: "2.7 2.7 2.7"
+    attitude_gain: "2 3 0.15"
+    angular_rate_gain: "0.4 0.52 0.18"
+    max_linear_accel: "2 2 2"
+
+imu:
+  update_rate: 100
+  visualize: false
+  noise:
+    ang_stddev: 2e-4
+    ang_bias_mean: 7.5e-6
+    ang_bias_stddev: 8e-7
+    lin_stddev: 1.7e-2
+    # Avoid deterministic quadratic drift during brief LiDAR degeneracy while
+    # retaining stochastic accelerometer bias/noise.
+    lin_bias_mean: 0.0
+    lin_bias_stddev: 0.001
+
+lidar:
+  update_rate: 10
+  visualize: false
+  h_rays:
+    samples: 180
+    min_angle: -3.14159
+    max_angle: 3.14159
+    resolution: 0.2
+  # Wider downward FOV than the fishbot: a flying lidar must see the floor and
+  # the wall bases, not just a horizontal band.
+  # Upper limit 0.9 rad (+52 deg) matches the real Livox mid360 (-7..+52 deg).
+  # The old +20 deg cap blinded parked drones to a teammate looping overhead
+  # during the vertically-separated warm-up (the 5-drone fusion regression).
+  # Samples 64 -> 96 keeps per-ray vertical density as the span grows.
+  v_rays:
+    samples: 96
+    min_angle: -0.7
+    max_angle: 0.9
+    resolution: 0.2
+  # Exclude the carrying quadrotor's own body/rotors.  The previous 0.12 m
+  # near range produced roughly 1,000 self returns per scan and could seed a
+  # false Swarm-LIO2 teammate tracker at the local origin.
+  range_min: 0.8
+  range_max: 10.0
+  range_res: 0.01
+  noise_stddev: 0.01

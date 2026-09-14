@@ -1,0 +1,170 @@
+{
+  "tab": {
+    "title": "{{BOT}}",
+    "layout": {
+      "first": "3D!{{BOT}}",
+      "second": {
+        "first": {
+          "first": "foxglove-teleop-twist-keyboard.Teleop Twist!{{BOT}}-kbd",
+          "second": "virtual-joystick.Virtual Joystick!{{BOT}}-joy",
+          "direction": "row"
+        },
+        "second": {
+          "first": "Plot!{{BOT}}-accel",
+          "second": "Plot!{{BOT}}-gyro",
+          "direction": "column"
+        },
+        "direction": "column",
+        "splitPercentage": 28
+      },
+      "direction": "row",
+      "splitPercentage": 63
+    }
+  },
+  "panels": {
+    "3D!{{BOT}}": {
+      "followMode": "follow-pose",
+      "followTf": "{{BOT}}/world",
+      "scene": {
+        "backgroundColor": "#282828",
+        "syncCamera": false,
+        "transforms": {
+          "labelSize": 0.07,
+          "axisSize": 0.1,
+          "lineWidth": 2,
+          "editable": false,
+          "showLabel": true
+        }
+      },
+      "cameraState": {
+        "perspective": true,
+        "distance": 4.7,
+        "phi": 53,
+        "thetaOffset": 160,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "transforms": {
+        "frame:{{BOT}}/caster_link": { "visible": false },
+        "frame:{{BOT}}/caster2_link": { "visible": false },
+        "frame:{{BOT}}/base_link": { "visible": false },
+        "frame:{{BOT}}/imu_link": { "visible": true },
+        "frame:{{BOT}}/lidar_link": { "visible": false },
+        "frame:{{BOT}}/world": { "visible": true }
+      },
+      "topics": {
+        "/{{BOT}}/lidar_points/points": {
+          "visible": true,
+          "colorField": "intensity",
+          "colorMode": "gradient",
+          "colorMap": "rainbow",
+          "pointSize": 3,
+          "gradient": ["#c19898ff", "#13ff00ff"]
+        }
+      },
+      "layers": {
+        "{{BOT}}-grid": {
+          "visible": true,
+          "drawBehind": false,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "{{BOT}}-grid",
+          "layerId": "foxglove.Grid",
+          "frameId": "map_origin",
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "color": "#68b1ffff",
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "order": 0
+        },
+        "{{BOT}}-urdf": {
+          "displayMode": "auto",
+          "fallbackColor": "#ff0000",
+          "showAxis": false,
+          "axisScale": 1,
+          "showOutlines": true,
+          "opacity": 0.52,
+          "visible": true,
+          "frameLocked": true,
+          "instanceId": "{{BOT}}-urdf",
+          "label": "URDF",
+          "layerId": "foxglove.Urdf",
+          "sourceType": "topic",
+          "topic": "/{{BOT}}/robot_description",
+          "parameter": "",
+          "url": "",
+          "filePath": "",
+          "framePrefix": "{{BOT}}/",
+          "order": 1,
+          "links": {}
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/{{BOT}}/move_base_simple/goal",
+        "pointTopic": "/{{BOT}}/clicked_point",
+        "poseEstimateTopic": "/{{BOT}}/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {}
+    },
+
+    "foxglove-teleop-twist-keyboard.Teleop Twist!{{BOT}}-kbd": {
+      "publishRate": 10,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/{{BOT}}/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+
+    "virtual-joystick.Virtual Joystick!{{BOT}}-joy": {
+      "publishRate": 15,
+      "maxLinearSpeed": 0.7,
+      "maxAngularSpeed": 1.0,
+      "topic": "/{{BOT}}/cmd_vel",
+      "messageSchema": "geometry_msgs/msg/Twist"
+    },
+
+    "Plot!{{BOT}}-accel": {
+      "title": "{{BOT}} IMU Linear Accel",
+      "paths": [
+        { "timestampMethod": "receiveTime", "value": "/{{BOT}}/imu.linear_acceleration.x", "enabled": true },
+        { "timestampMethod": "receiveTime", "value": "/{{BOT}}/imu.linear_acceleration.y", "enabled": true },
+        { "timestampMethod": "receiveTime", "value": "/{{BOT}}/imu.linear_acceleration.z", "enabled": true }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+
+    "Plot!{{BOT}}-gyro": {
+      "title": "{{BOT}} IMU Angular Vel",
+      "paths": [
+        { "timestampMethod": "receiveTime", "value": "/{{BOT}}/imu.angular_velocity.x", "enabled": true },
+        { "timestampMethod": "receiveTime", "value": "/{{BOT}}/imu.angular_velocity.y", "enabled": true },
+        { "timestampMethod": "receiveTime", "value": "/{{BOT}}/imu.angular_velocity.z", "enabled": true }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    }
+  }
+}

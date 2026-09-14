@@ -1,0 +1,103 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+    Property Tree Widget:
+      Expanded: ~
+    Help Height: 0
+Visualization Manager:
+  Class: ""
+  Name: root
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Plane Cell Count: 50
+      Cell Size: 1
+      Line Style:
+        Value: Lines
+      Color: 170; 170; 170
+      Plane: XY
+    - Class: rviz_default_plugins/PointCloud2
+      Name: Environment(真实障碍)
+      Enabled: true
+      Topic:
+        Value: /env/obstacles
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Depth: 1
+      Style: Boxes
+      Size (m): 0.32
+      Color Transformer: FlatColor
+      Color: 96; 106; 122
+      Alpha: 0.55
+      Decay Time: 0
+    - Class: rviz_default_plugins/PointCloud2
+      Name: SLAM Map(SLAM点云)
+      Enabled: true
+      Topic:
+        Value: /bot4/slam_map
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Depth: 1
+      Style: Flat Squares
+      Size (m): 0.12
+      Color Transformer: AxisColor
+      Axis: Z
+      Autocompute Value Bounds:
+        Value: true
+      Alpha: 1
+      Decay Time: 0
+    - Class: rviz_default_plugins/Path
+      Name: GT Path(真实轨迹)
+      Enabled: true
+      Topic:
+        Value: /bot4/gt_path
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Depth: 1
+      Color: 20; 20; 20
+      Line Style: Billboards
+      Line Width: 0.12
+    - Class: rviz_default_plugins/Path
+      Name: SLAM Path(SLAM轨迹)
+      Enabled: true
+      Topic:
+        Value: /bot4/slam_path
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Depth: 1
+      Color: 0; 122; 255
+      Line Style: Billboards
+      Line Width: 0.1
+  Global Options:
+    Fixed Frame: map
+    Background Color: 236; 238; 241
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Distance: 62
+      Focal Point:
+        X: 14
+        Y: 16
+        Z: 12
+      Pitch: 0.42
+      Yaw: 0.86
+      Target Frame: map
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 900
+  Width: 1400
+  Hide Left Dock: false

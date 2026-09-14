@@ -1,0 +1,80 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Plane Cell Count: 60
+      Cell Size: 1
+      Color: 95; 103; 117
+    - Class: rviz_default_plugins/PointCloud2
+      Name: bot1 observed cloud
+      Enabled: true
+      Topic: {Value: /racer_replay/v41/bot1/observed_cloud, Durability Policy: Transient Local, Reliability Policy: Reliable, History Policy: Keep Last, Depth: 1}
+      Style: Flat Squares
+      Size (m): 0.14
+      Color Transformer: FlatColor
+      Color: 31; 119; 180
+    - Class: rviz_default_plugins/PointCloud2
+      Name: bot2 observed cloud
+      Enabled: true
+      Topic: {Value: /racer_replay/v41/bot2/observed_cloud, Durability Policy: Transient Local, Reliability Policy: Reliable, History Policy: Keep Last, Depth: 1}
+      Style: Flat Squares
+      Size (m): 0.14
+      Color Transformer: FlatColor
+      Color: 255; 127; 14
+    - Class: rviz_default_plugins/PointCloud2
+      Name: bot3 observed cloud
+      Enabled: true
+      Topic: {Value: /racer_replay/v41/bot3/observed_cloud, Durability Policy: Transient Local, Reliability Policy: Reliable, History Policy: Keep Last, Depth: 1}
+      Style: Flat Squares
+      Size (m): 0.14
+      Color Transformer: FlatColor
+      Color: 44; 160; 44
+    - Class: rviz_default_plugins/PointCloud2
+      Name: bot4 observed cloud
+      Enabled: true
+      Topic: {Value: /racer_replay/v41/bot4/observed_cloud, Durability Policy: Transient Local, Reliability Policy: Reliable, History Policy: Keep Last, Depth: 1}
+      Style: Flat Squares
+      Size (m): 0.14
+      Color Transformer: FlatColor
+      Color: 214; 39; 40
+    - Class: rviz_default_plugins/PointCloud2
+      Name: bot5 observed cloud
+      Enabled: true
+      Topic: {Value: /racer_replay/v41/bot5/observed_cloud, Durability Policy: Transient Local, Reliability Policy: Reliable, History Policy: Keep Last, Depth: 1}
+      Style: Flat Squares
+      Size (m): 0.14
+      Color Transformer: FlatColor
+      Color: 148; 103; 189
+    - Class: rviz_default_plugins/PointCloud2
+      Name: bot6 observed cloud
+      Enabled: true
+      Topic: {Value: /racer_replay/v41/bot6/observed_cloud, Durability Policy: Transient Local, Reliability Policy: Reliable, History Policy: Keep Last, Depth: 1}
+      Style: Flat Squares
+      Size (m): 0.14
+      Color Transformer: FlatColor
+      Color: 140; 86; 75
+  Global Options:
+    Fixed Frame: map
+    Background Color: 16; 20; 28
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 72
+      Focal Point: {X: 20, Y: 23, Z: 19}
+      Pitch: 0.50
+      Yaw: 0.80
+      Target Frame: map
+Window Geometry:
+  Height: 900
+  Width: 1100
+  X: 0
+  Y: 30

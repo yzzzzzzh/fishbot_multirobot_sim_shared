@@ -1,0 +1,80 @@
+robot:
+  base_name: quadruped_mid360
+  laser_retro: 5000.0
+  base_frame: base_link
+  lidar_frame: lidar_link
+  imu_frame: imu_link
+  odom_frame: odom
+  odom_pub: wheel_odom
+  lidar_pub: lidar_points
+  imu_pub: imu
+
+geometry:
+  body:
+    size_x: 0.65
+    size_y: 0.32
+    size_z: 0.22
+    mass: 12.0
+    inertia:
+      ixx: 0.22
+      iyy: 0.48
+      izz: 0.58
+  wheel:
+    radius: 0.08
+    width: 0.055
+    mass: 0.35
+    inertia: 0.0015
+  caster:
+    radius: 0.06
+    mass: 0.10
+
+kinematics:
+  wheel_separation: 0.44
+  wheel_radius: 0.08
+
+mount:
+  # base_link is the trunk centre and spawns at z=0.36 m.
+  lidar_z: 0.290
+  imu_z: 0.195
+  spawn_z: 0.36
+
+plugins:
+  diff_drive:
+    update_rate: 50
+    publish_odom: true
+    publish_odom_tf: false
+
+imu:
+  update_rate: 100
+  visualize: false
+  noise:
+    ang_stddev: 2.0e-4
+    ang_bias_mean: 7.5e-6
+    ang_bias_stddev: 8.0e-7
+    lin_stddev: 1.7e-2
+    lin_bias_mean: 0.0
+    lin_bias_stddev: 1.0e-3
+
+lidar:
+  update_rate: 10
+  visualize: false
+  h_rays:
+    samples: 360
+    min_angle: -3.14159
+    max_angle: 3.14159
+    # Preserve one ray per requested azimuth.  The former 0.5 multiplier
+    # emitted only 180 azimuths and starved LIO of the small perpendicular
+    # surfaces that make corridor translation observable.
+    resolution: 1.0
+  v_rays:
+    # Approximate the Mid-360's asymmetric vertical field of view.  The old
+    # +/-25.8 degree, half-resolution scan missed most ceiling lintels and
+    # left long teaching-building corridors longitudinally unobservable.
+    samples: 64
+    min_angle: -0.126
+    max_angle: 0.907
+    resolution: 1.0
+  range_min: 0.25
+  range_max: 10.0
+  range_res: 0.01
+  noise_stddev: 0.01

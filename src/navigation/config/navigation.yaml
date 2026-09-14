@@ -1,0 +1,23 @@
+/**:
+    ros__parameters:
+        input_topic:
+            odom_topic: wheel_odom
+            goal_topic: move_base/goal
+
+        output_topic:
+            cmd_vel_topic: cmd_vel
+            nav_status_topic: nav_status
+            nav_path_topic: nav_path
+
+        path_frame: odom
+        align_final_heading: true
+
+        controller:
+            control_rate: 20.0
+            max_linear_speed: 0.6
+            max_angular_speed: 1.6
+            linear_gain: 1.0
+            angular_gain: 2.4
+            slowdown_radius: 0.5
+            arrival_tolerance: 0.12
+            yaw_tolerance: 0.05

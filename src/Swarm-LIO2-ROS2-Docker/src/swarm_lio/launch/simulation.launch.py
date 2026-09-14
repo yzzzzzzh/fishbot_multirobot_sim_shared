@@ -64,6 +64,80 @@ def generate_launch_description():
                         'drone_id': str(bot_id),
                         'output_mode': output_mode,
                         'use_sim_time': use_sim_time_str,
+                        'ground_truth_logging_en':
+                            context.launch_configurations.get(
+                                'ground_truth_logging_en', 'false'),
+                        # swarm size follows the actual bot count (yaml is stale);
+                        # override to 1 to run PURE per-drone LIO with teammate
+                        # detection off (independent-exploration scenarios where
+                        # the mutual-observation code hits degenerate crashes).
+                        'uav_num': (context.launch_configurations.get('force_uav_num', '0')
+                                    if int(context.launch_configurations.get('force_uav_num', '0')) > 0
+                                    else str(len(bot_ids))),
+                        # robot-size-dependent cluster gate; 0 = keep yaml value
+                        'cluster_size_thresh': context.launch_configurations.get(
+                            'cluster_size_thresh', '0'),
+                        'cross_world_transform_mode': context.launch_configurations.get(
+                            'cross_world_transform_mode', 'se3'),
+                        'enable_mutual_observation_update': context.launch_configurations.get(
+                            'enable_mutual_observation_update', 'true'),
+                        'gravity_constrained_extrinsic_rotation': context.launch_configurations.get(
+                            'gravity_constrained_extrinsic_rotation', 'false'),
+                        'max_abs_match_yaw_deg': context.launch_configurations.get(
+                            'max_abs_match_yaw_deg', '5.0'),
+                        'traj_matching_start_thresh':
+                            context.launch_configurations.get(
+                                'traj_matching_start_thresh', '0.0'),
+                        'traj_matching_time_tolerance':
+                            context.launch_configurations.get(
+                                'traj_matching_time_tolerance', '0.0'),
+                        'ave_match_error_thresh':
+                            context.launch_configurations.get(
+                                'ave_match_error_thresh', '0.0'),
+                        'temp_tracker_lost_timeout':
+                            context.launch_configurations.get(
+                                'temp_tracker_lost_timeout', '0.0'),
+                        'valid_temp_cluster_dist_thresh':
+                            context.launch_configurations.get(
+                                'valid_temp_cluster_dist_thresh', '0.0'),
+                        'use_raw_temp_measurement_for_traj_matching':
+                            context.launch_configurations.get(
+                                'use_raw_temp_measurement_for_traj_matching',
+                                'false'),
+                        'trajectory_samples_require_measurement':
+                            context.launch_configurations.get(
+                                'trajectory_samples_require_measurement',
+                                'false'),
+                        'stop_tracking_after_bootstrap':
+                            context.launch_configurations.get(
+                                'stop_tracking_after_bootstrap',
+                                'true'),
+                        # Long exploration runs must not retain every scan in RAM.
+                        # The RACER mapper consumes the current registered scan,
+                        # so neither Swarm-LIO's PCD accumulator nor its local-map
+                        # publisher is needed on this path.
+                        'pcd_save_en': context.launch_configurations.get(
+                            'pcd_save_en', 'false'),
+                        'local_map_pub_en': context.launch_configurations.get(
+                            'local_map_pub_en', 'false'),
+                        'planar_odom_prior_en':
+                            context.launch_configurations.get(
+                                'planar_odom_prior_en', 'false'),
+                        'planar_odom_position_gain':
+                            context.launch_configurations.get(
+                                'planar_odom_position_gain', '0.50'),
+                        'planar_odom_velocity_gain':
+                            context.launch_configurations.get(
+                                'planar_odom_velocity_gain', '0.0'),
+                        'planar_odom_yaw_gain':
+                            context.launch_configurations.get(
+                                'planar_odom_yaw_gain', '0.0'),
+                        'point_filter_num': context.launch_configurations.get(
+                            'point_filter_num', '0'),
+                        'filter_size_surf': context.launch_configurations.get(
+                            'filter_size_surf', '0.0'),
+                        'filter_size_map': context.launch_configurations.get(
+                            'filter_size_map', '0.0'),
                     }.items()
                 )
             )
@@ -86,7 +160,9 @@ def generate_launch_description():
 
         # --- Decide which bots get RViz ---
         rviz_list_str = context.launch_configurations.get('rviz_list', '').strip()
-        if rviz_list_str:
+        if rviz_list_str.lower() in ('none', 'off', 'false'):
+            rviz_ids = []
+        elif rviz_list_str:
             rviz_ids = [int(x) for x in rviz_list_str.split(',') if x]
         else:
             rviz_ids = [bot_ids[0]] if bot_ids else []
@@ -136,9 +212,124 @@ def generate_launch_description():
 
         return actions
 
+    declare_cluster_size = DeclareLaunchArgument(
+        "cluster_size_thresh",
+        default_value="0",
+        description="valid_cluster_size_thresh override for big robots; 0 = keep yaml"
+    )
+    declare_force_uav_num = DeclareLaunchArgument(
+        "force_uav_num",
+        default_value="0",
+        description="override actual_uav_num; 1 = pure per-drone LIO (teammate off)"
+    )
+    declare_cross_world_transform_mode = DeclareLaunchArgument(
+        "cross_world_transform_mode",
+        default_value="se3",
+        description="cross-world trajectory alignment: se3 or se2_legacy"
+    )
+    declare_enable_mutual_observation_update = DeclareLaunchArgument(
+        "enable_mutual_observation_update",
+        default_value="true",
+        description="feed active/passive teammate observations into each local ESIKF"
+    )
+    declare_ground_truth_logging_en = DeclareLaunchArgument(
+        "ground_truth_logging_en",
+        default_value="false",
+        description="subscribe to simulator truth for estimator-side logging only"
+    )
+    declare_gravity_constrained_extrinsic_rotation = DeclareLaunchArgument(
+        "gravity_constrained_extrinsic_rotation",
+        default_value="false",
+        description="robustify SE3 roll/pitch using each LIO gravity frame"
+    )
+    declare_max_abs_match_yaw_deg = DeclareLaunchArgument(
+        "max_abs_match_yaw_deg",
+        default_value="5.0",
+        description="initial-heading plausibility gate for trajectory matching"
+    )
+    declare_traj_matching_time_tolerance = DeclareLaunchArgument(
+        "traj_matching_time_tolerance",
+        default_value="0.0",
+        description="nearest trajectory timestamp association gate; 0 = keep yaml"
+    )
+    declare_use_raw_temp_measurement = DeclareLaunchArgument(
+        "use_raw_temp_measurement_for_traj_matching",
+        default_value="false",
+        description="use current lidar cluster positions for trajectory matching"
+    )
+    declare_require_measured_trajectory_samples = DeclareLaunchArgument(
+        "trajectory_samples_require_measurement",
+        default_value="false",
+        description="exclude prediction-only temporary-tracker samples"
+    )
+    declare_pcd_save_en = DeclareLaunchArgument(
+        "pcd_save_en",
+        default_value="false",
+        description="accumulate scans for PCD saving (unsafe for long runs when interval=-1)"
+    )
+    declare_local_map_pub_en = DeclareLaunchArgument(
+        "local_map_pub_en",
+        default_value="false",
+        description="publish Swarm-LIO's accumulated local map; RACER uses current scans instead"
+    )
+    declare_planar_odom_prior_en = DeclareLaunchArgument(
+        "planar_odom_prior_en",
+        default_value="false",
+        description="fuse a bounded wheel/leg-odometry prior for planar robots"
+    )
+    declare_planar_odom_position_gain = DeclareLaunchArgument(
+        "planar_odom_position_gain",
+        default_value="0.50",
+        description="complementary planar position gain"
+    )
+    declare_planar_odom_velocity_gain = DeclareLaunchArgument(
+        "planar_odom_velocity_gain",
+        default_value="0.0",
+        description="complementary planar velocity gain"
+    )
+    declare_planar_odom_yaw_gain = DeclareLaunchArgument(
+        "planar_odom_yaw_gain",
+        default_value="0.0",
+        description="complementary planar yaw gain"
+    )
+    declare_point_filter_num = DeclareLaunchArgument(
+        "point_filter_num",
+        default_value="0",
+        description="LiDAR input decimation override; 0 = keep yaml"
+    )
+    declare_filter_size_surf = DeclareLaunchArgument(
+        "filter_size_surf",
+        default_value="0.0",
+        description="scan voxel size override in metres; 0 = keep yaml"
+    )
+    declare_filter_size_map = DeclareLaunchArgument(
+        "filter_size_map",
+        default_value="0.0",
+        description="map voxel size override in metres; 0 = keep yaml"
+    )
+
     return LaunchDescription([
         declare_bot_list,
         declare_rviz_list,
         declare_use_sim_time,
+        declare_cluster_size,
+        declare_force_uav_num,
+        declare_cross_world_transform_mode,
+        declare_enable_mutual_observation_update,
+        declare_ground_truth_logging_en,
+        declare_gravity_constrained_extrinsic_rotation,
+        declare_max_abs_match_yaw_deg,
+        declare_traj_matching_time_tolerance,
+        declare_use_raw_temp_measurement,
+        declare_require_measured_trajectory_samples,
+        declare_pcd_save_en,
+        declare_local_map_pub_en,
+        declare_planar_odom_prior_en,
+        declare_planar_odom_position_gain,
+        declare_planar_odom_velocity_gain,
+        declare_planar_odom_yaw_gain,
+        declare_point_filter_num,
+        declare_filter_size_surf,
+        declare_filter_size_map,
         OpaqueFunction(function=launch_everything),
     ])

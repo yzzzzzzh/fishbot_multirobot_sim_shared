@@ -342,6 +342,7 @@ public:
 
     id_esikf_map teammate_tracker;
     int pos_num_in_traj;
+    double traj_matching_min_sample_fraction;
     vector<TemporaryTracker> temp_tracker;
     typedef unordered_map<int, Teammate> id_teammate_map;
     typedef id_teammate_map::value_type id2teammate;
@@ -353,10 +354,16 @@ public:
     mutex mtx_buffer_reconnectID;
     bool degenerated;
     deque<Vector4d> teammate_traj[MAX_UAV_NUM];
+    // high-reflectivity (laser_retro) points are teammate/self bodies, never the
+    // static environment -> exposed so the map filter can drop them directly.
+    int get_inten_threshold() const { return inten_threshold; }
 
 private:
     rclcpp::Node::SharedPtr node_;
     rclcpp::Subscription<swarm_msgs::msg::QuadStatePub>::SharedPtr QuadState_subscriber, QuadState_subscriber_sim;
+    std::vector<
+        rclcpp::Subscription<swarm_msgs::msg::QuadStatePub>::SharedPtr>
+        QuadState_peer_subscribers;
     rclcpp::Subscription<swarm_msgs::msg::GlobalExtrinsicStatus>::SharedPtr GlobalExtrinsic_subscriber, GlobalExtrinsic_subscriber_sim;
     rclcpp::Publisher<swarm_msgs::msg::QuadStatePub>::SharedPtr QuadState_publisher;
     rclcpp::Publisher<swarm_msgs::msg::GlobalExtrinsicStatus>::SharedPtr GlobalExtrinsic_publisher;
@@ -374,8 +381,21 @@ private:
     vector<int> reconnected_id;
     vector<int> teammate_id_by_traj_matching;
     rclcpp::Publisher<swarm_msgs::msg::ConnectedTeammateList>::SharedPtr pubTeammateIdTrajMatching;
-    double predict_region_radius, valid_cluster_dist_thresh, valid_cluster_size_thresh, reset_tracker_thresh, temp_predict_region_radius;
-    double valid_temp_cluster_dist_thresh, same_obj_thresh, traj_matching_start_thresh, ave_match_error_thresh;
+    double predict_region_radius, valid_cluster_dist_thresh, valid_cluster_size_thresh,
+        reset_tracker_thresh, temp_predict_region_radius, min_high_inten_range,
+        temp_tracker_lost_timeout, temp_tracker_prediction_horizon;
+    // limited radio range [m] between drones; <=0 = unlimited (ideal broadcast)
+    double comm_range{-1.0};
+    // "se3" follows upstream Swarm-LIO2. "se2_legacy" retains this ROS2
+    // port's original yaw+x+y trajectory matching and projection behavior.
+    string cross_world_transform_mode_{"se3"};
+    bool use_legacy_se2_extrinsics_{false};
+    bool gravity_constrained_extrinsic_rotation_{false};
+    bool use_raw_temp_measurement_for_traj_matching_{false};
+    bool trajectory_samples_require_measurement_{false};
+    double valid_temp_cluster_dist_thresh, same_obj_thresh, traj_matching_start_thresh,
+        traj_matching_time_tolerance, ave_match_error_thresh,
+        max_abs_match_yaw_deg;
     nav_msgs::msg::Odometry TeammateOdom;
     bool found_all_teammates{false}, cluster_extraction_in_predict_region;
     double text_scale, mesh_scale;

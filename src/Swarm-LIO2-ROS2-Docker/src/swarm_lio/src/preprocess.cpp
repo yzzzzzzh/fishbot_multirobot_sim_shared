@@ -179,6 +179,10 @@ void Preprocess::process(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg
             sim_handler(msg);
             break;
 
+        case UNILIDAR:
+            unilidar_handler(msg);
+            break;
+
         default:
             printf("Error LiDAR Type");
             break;
@@ -870,4 +874,46 @@ bool Preprocess::edge_jump_judge(const PointCloudXYZI &pl, vector<orgtype> &type
     }
 
     return true;
+}
+
+// Unitree L1/L2 handler.  The driver already merges cloud_scan_num line scans
+// into one PointCloud2 whose per-point `time` is the offset (seconds) from the
+// cloud stamp.  If the driver ever ships without valid offsets, fall back to an
+// index-uniform spread over one frame period (the L1 pattern is non-repetitive,
+// so the Velodyne constant-rotation model does not apply).
+void Preprocess::unilidar_handler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
+    pl_surf.clear();
+    pl_corn.clear();
+    pl_full.clear();
+
+    pcl::PointCloud<unilidar_ros::Point> pl_orig;
+    pcl::fromROSMsg(*msg, pl_orig);
+    const int plsize = pl_orig.points.size();
+    if (plsize == 0) return;
+    pl_surf.reserve(plsize);
+
+    given_offset_time = pl_orig.points[plsize - 1].time > 0.0f;
+    const double frame_period_ms = 1000.0 / std::max(1.0, original_freq);
+
+    for (int i = 0; i < plsize; i++) {
+        if (i % point_filter_num != 0) continue;
+        PointType added_pt;
+        added_pt.normal_x = 0;
+        added_pt.normal_y = 0;
+        added_pt.normal_z = 0;
+        added_pt.x = pl_orig.points[i].x;
+        added_pt.y = pl_orig.points[i].y;
+        added_pt.z = pl_orig.points[i].z;
+        added_pt.intensity = pl_orig.points[i].intensity;
+        if (given_offset_time) {
+            added_pt.curvature = pl_orig.points[i].time * 1000.0f;  // s -> ms
+        } else {
+            added_pt.curvature = frame_period_ms * double(i) / double(plsize);
+        }
+        if (added_pt.curvature / 1000.0 > 1.0 / original_freq + 0.02) continue;  // stale point
+        const double range_sq = added_pt.x * added_pt.x + added_pt.y * added_pt.y + added_pt.z * added_pt.z;
+        if (range_sq > blind * blind && range_sq < DET_RANGE * DET_RANGE) {
+            pl_surf.points.push_back(added_pt);
+        }
+    }
 }

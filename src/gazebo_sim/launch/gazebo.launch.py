@@ -2,6 +2,7 @@ import os
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, ExecuteProcess, SetEnvironmentVariable
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.substitutions import FindPackageShare
 from launch_ros.actions import Node
@@ -23,11 +24,21 @@ def generate_launch_description() -> LaunchDescription:
     resource_value = ':'.join(dict.fromkeys(resource_paths))
 
     world_arg = DeclareLaunchArgument('world', default_value=default_world)
+    headless_arg = DeclareLaunchArgument('headless', default_value='false')
     world_path = PathJoinSubstitution([pkg_share, 'worlds', LaunchConfiguration('world')])
 
-    start_gazebo_cmd = ExecuteProcess(
+    start_gazebo_gui_cmd = ExecuteProcess(
         cmd=['ign', 'gazebo', '-r', '-v', '4', '--render-engine', 'ogre2', world_path],
-        output='screen'
+        output='screen',
+        condition=UnlessCondition(LaunchConfiguration('headless')),
+    )
+    start_gazebo_headless_cmd = ExecuteProcess(
+        cmd=[
+            'ign', 'gazebo', '-r', '-s', '--headless-rendering',
+            '-v', '4', '--render-engine', 'ogre2', world_path,
+        ],
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('headless')),
     )
 
     # Bridge simulation clock from the world topic into ROS /clock
@@ -42,8 +53,10 @@ def generate_launch_description() -> LaunchDescription:
 
     launch_description = LaunchDescription()
     launch_description.add_action(world_arg)
+    launch_description.add_action(headless_arg)
     launch_description.add_action(SetEnvironmentVariable('IGN_GAZEBO_RESOURCE_PATH', resource_value))
     launch_description.add_action(SetEnvironmentVariable('GZ_SIM_RESOURCE_PATH', resource_value))
-    launch_description.add_action(start_gazebo_cmd)
+    launch_description.add_action(start_gazebo_gui_cmd)
+    launch_description.add_action(start_gazebo_headless_cmd)
     launch_description.add_action(clock_bridge)
     return launch_description

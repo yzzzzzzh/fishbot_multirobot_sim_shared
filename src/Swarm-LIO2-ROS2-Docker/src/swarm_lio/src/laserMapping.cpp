@@ -7,6 +7,8 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <std_msgs/msg/bool.hpp>
+#include <atomic>
 #include <algorithm>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/voxel_grid.h>
@@ -97,6 +99,56 @@ int frame_num_in_sliding_window;
 double text_scale, mesh_scale;
 double degeneration_thresh;
 double ground_height_threshold;
+double teammate_detection_delay = 15.0;   // warm-up: run pure local LIO before enabling teammate detection
+std::atomic<bool> racer_bootstrap_complete{false};
+
+// Optional planar wheel/leg-odometry prior for ground robots.  It is disabled
+// by default, so the UAV path remains pure LiDAR-inertial Swarm-LIO2.  Long,
+// repetitive corridors can leave planar translation weakly observable and
+// produce a persistent one-room scan-matching jump.  A quadruped normally has
+// proprioceptive leg odometry; the Gazebo contact proxy exposes the equivalent
+// signal as wheel_odom.  Wheel-yaw integration is intentionally not used:
+// differential-drive skid made that accumulated heading a worse reference
+// than LIO.  Instead, integrate only the measured body-forward speed using the
+// current LIO heading in short windows.  The result is a fault detector for a
+// corridor-direction LIO jump, not a continuously fused absolute pose source.
+bool planar_odom_prior_en{false};
+double planar_odom_position_gain{0.50};
+double planar_odom_velocity_gain{0.0};
+double planar_odom_yaw_gain{0.0};
+double planar_odom_position_deadband{0.60};
+double planar_odom_max_position_correction{0.10};
+double planar_odom_max_yaw_correction{0.035};
+double planar_odom_max_age{0.30};
+double planar_odom_window_duration{5.0};
+double planar_odom_release_residual{0.08};
+double planar_odom_yaw_consistency_gate{0.175};
+string planar_odom_topic;
+
+struct PlanarOdomSample {
+    double stamp{0.0};
+    V3D position{Zero3d};
+    V3D body_velocity{Zero3d};
+    double yaw_rate{0.0};
+    double yaw{0.0};
+    bool valid{false};
+};
+
+mutex mtx_planar_odom;
+PlanarOdomSample latest_planar_odom;
+bool planar_odom_alignment_initialized{false};
+V3D planar_odom_origin{Zero3d};
+V3D planar_lio_origin{Zero3d};
+double planar_odom_yaw_origin{0.0};
+double planar_lio_yaw_origin{0.0};
+V3D planar_proprio_position{Zero3d};
+double planar_odom_last_stamp{0.0};
+double planar_odom_window_start_time{0.0};
+bool planar_odom_recovery_active{false};
+uint64_t planar_odom_correction_count{0};
+double planar_odom_max_residual_seen{0.0};
+double planar_odom_previous_residual{0.0};
+int planar_odom_worsening_count{0};
 
 //IMU propagation Parameters
 StatesGroup imu_propagate, latest_ekf_state;
@@ -169,6 +221,16 @@ inline void make_pcl_unorganized(PointCloudXYZI &c) {
     c.is_dense = true;
 }
 
+// pcl::transformPointCloud integer-divides by the cloud's width internally, so
+// an EMPTY cloud (width == 0) raises SIGFPE (FPE_INTDIV). Aggressive flight or a
+// degenerate first frame can empty any of these clouds. Route every transform
+// through this guard, which no-ops (clearing the output) on empty input.
+inline void safeTransform(PointCloudXYZI &in, PointCloudXYZI &out, const Matrix4d &T) {
+    if (in.points.empty()) { out.clear(); return; }
+    make_pcl_unorganized(in);
+    pcl::transformPointCloud(in, out, T);
+}
+
 static inline double yawFromRot(const M3D& R) {
     return std::atan2(R(1,0), R(0,0));
 }
@@ -176,6 +238,224 @@ static inline M3D rotZ(double yaw) {
     Eigen::AngleAxisd aa(yaw, Eigen::Vector3d::UnitZ());
     return aa.toRotationMatrix();
 }
+
+static inline double wrapAngle(double angle) {
+    return std::atan2(std::sin(angle), std::cos(angle));
+}
+
+void planar_odom_cbk(const nav_msgs::msg::Odometry::ConstSharedPtr msg) {
+    const auto &q = msg->pose.pose.orientation;
+    const double yaw = std::atan2(
+        2.0 * (q.w * q.z + q.x * q.y),
+        1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+
+    PlanarOdomSample sample;
+    sample.stamp = rclcpp::Time(msg->header.stamp).seconds();
+    sample.position = V3D(
+        msg->pose.pose.position.x,
+        msg->pose.pose.position.y,
+        msg->pose.pose.position.z);
+    sample.body_velocity = V3D(
+        msg->twist.twist.linear.x,
+        msg->twist.twist.linear.y,
+        msg->twist.twist.linear.z);
+    sample.yaw_rate = msg->twist.twist.angular.z;
+    sample.yaw = yaw;
+    sample.valid = std::isfinite(sample.stamp) &&
+                   sample.position.allFinite() &&
+                   sample.body_velocity.allFinite() &&
+                   std::isfinite(sample.yaw_rate) &&
+                   std::isfinite(sample.yaw);
+    std::lock_guard<mutex> lock(mtx_planar_odom);
+    latest_planar_odom = sample;
+}
+
+bool apply_planar_odom_prior(const double current_lidar_time) {
+    if (!planar_odom_prior_en)
+        return false;
+    // The relative prior must use the final gravity-aligned LIO frame, and it
+    // must not alter the excitation trajectory used to estimate inter-robot
+    // SE(3) extrinsics.  RACER publishes bootstrap_complete only after every
+    // robot has a latched, validated common-frame transform.
+    if (!gravity_align_finished || !racer_bootstrap_complete.load())
+        return false;
+
+    PlanarOdomSample sample;
+    {
+        std::lock_guard<mutex> lock(mtx_planar_odom);
+        sample = latest_planar_odom;
+    }
+    if (!sample.valid ||
+        std::fabs(current_lidar_time - sample.stamp) > planar_odom_max_age)
+        return false;
+
+    const auto reanchor = [&]() {
+        planar_odom_origin = sample.position;
+        planar_lio_origin = state.pos_end;
+        planar_odom_yaw_origin = sample.yaw;
+        planar_lio_yaw_origin = yawFromRot(state.rot_end);
+        planar_proprio_position = state.pos_end;
+        planar_odom_last_stamp = sample.stamp;
+        planar_odom_window_start_time = current_lidar_time;
+        planar_odom_previous_residual = 0.0;
+        planar_odom_worsening_count = 0;
+    };
+
+    if (!planar_odom_alignment_initialized) {
+        reanchor();
+        planar_odom_alignment_initialized = true;
+        RCLCPP_INFO(
+            rclcpp::get_logger("laserMapping"),
+            "Planar odometry fault detector initialized on %s",
+            planar_odom_topic.c_str());
+        return false;
+    }
+
+    // wheel_odom pose integrates the differential-drive yaw and can be badly
+    // biased by skid during in-place turns.  Its instantaneous forward speed
+    // is still a useful proprioceptive cue.  Integrate that speed with the LIO
+    // heading, which preserves LIO as the attitude source and makes this check
+    // insensitive to accumulated wheel-yaw error.
+    const double odom_dt = sample.stamp - planar_odom_last_stamp;
+    if (odom_dt < -1.0e-6 || odom_dt > planar_odom_max_age) {
+        reanchor();
+        return false;
+    }
+    if (odom_dt > 0.0) {
+        const double lio_yaw = yawFromRot(state.rot_end);
+        const double c_lio = std::cos(lio_yaw);
+        const double s_lio = std::sin(lio_yaw);
+        planar_proprio_position.x() += odom_dt *
+            (c_lio * sample.body_velocity.x() -
+             s_lio * sample.body_velocity.y());
+        planar_proprio_position.y() += odom_dt *
+            (s_lio * sample.body_velocity.x() +
+             c_lio * sample.body_velocity.y());
+        planar_odom_last_stamp = sample.stamp;
+    }
+
+    V3D position_residual = planar_proprio_position - state.pos_end;
+    position_residual.z() = 0.0;
+    const double residual_norm = position_residual.head<2>().norm();
+    planar_odom_max_residual_seen =
+        std::max(planar_odom_max_residual_seen, residual_norm);
+    const double expected_yaw = wrapAngle(
+        planar_lio_yaw_origin +
+        wrapAngle(sample.yaw - planar_odom_yaw_origin));
+    const double yaw_residual =
+        wrapAngle(expected_yaw - yawFromRot(state.rot_end));
+
+    // Wheel/leg odometry is not an absolute pose source: skid accumulates over
+    // long intervals and is especially visible during tight turns.  Reject a
+    // quiet window whose wheel-yaw increment disagrees with LIO, but never
+    // abort an already active translational recovery: that recovery no longer
+    // depends on wheel yaw.
+    if (!planar_odom_recovery_active &&
+        std::fabs(yaw_residual) > planar_odom_yaw_consistency_gate) {
+        reanchor();
+        return false;
+    }
+    if (!planar_odom_recovery_active &&
+        current_lidar_time - planar_odom_window_start_time >=
+            planar_odom_window_duration) {
+        reanchor();
+        return false;
+    }
+    if (!planar_odom_recovery_active) {
+        if (residual_norm <= planar_odom_position_deadband)
+            return false;
+        planar_odom_recovery_active = true;
+        planar_odom_previous_residual = residual_norm;
+        planar_odom_worsening_count = 0;
+        RCLCPP_WARN(
+            rclcpp::get_logger("laserMapping"),
+            "PLANAR_ODOM_PRIOR_TRIGGER residual=%.3fm "
+            "yaw_residual=%.2fdeg window=%.2fs",
+            residual_norm,
+            yaw_residual * 57.295779513,
+            current_lidar_time - planar_odom_window_start_time);
+    } else if (residual_norm <= planar_odom_release_residual) {
+        planar_odom_recovery_active = false;
+        reanchor();
+        RCLCPP_INFO(
+            rclcpp::get_logger("laserMapping"),
+            "PLANAR_ODOM_PRIOR_RELEASE residual=%.3fm",
+            residual_norm);
+        return false;
+    } else {
+        // A wheel/leg-odometry recovery is only a bounded fault guard.  If
+        // applying it does not make the residual converge, continuing the
+        // correction can create positive feedback and pull an otherwise
+        // healthy LiDAR estimate away from its map.  Abort after five
+        // consecutive worsening scans, or before the disagreement exceeds
+        // 1.0 m, and re-anchor without applying the harmful correction.
+        if (residual_norm > planar_odom_previous_residual + 0.02)
+            ++planar_odom_worsening_count;
+        else if (residual_norm <= planar_odom_previous_residual)
+            planar_odom_worsening_count = 0;
+        planar_odom_previous_residual = residual_norm;
+        if (planar_odom_worsening_count >= 5 || residual_norm >= 1.0) {
+            RCLCPP_WARN(
+                rclcpp::get_logger("laserMapping"),
+                "PLANAR_ODOM_PRIOR_ABORT_WORSENING residual=%.3fm "
+                "worsening_scans=%d",
+                residual_norm,
+                planar_odom_worsening_count);
+            planar_odom_recovery_active = false;
+            reanchor();
+            return false;
+        }
+    }
+
+    V3D position_correction =
+        planar_odom_position_gain * position_residual;
+    const double correction_norm =
+        position_correction.head<2>().norm();
+    if (correction_norm > planar_odom_max_position_correction) {
+        position_correction *=
+            planar_odom_max_position_correction / correction_norm;
+    }
+    state.pos_end += position_correction;
+
+    const double yaw_correction = std::max(
+        -planar_odom_max_yaw_correction,
+        std::min(
+            planar_odom_max_yaw_correction,
+            planar_odom_yaw_gain * yaw_residual));
+    if (std::fabs(yaw_correction) > 1.0e-6)
+        state.rot_end = rotZ(yaw_correction) * state.rot_end;
+
+    const double corrected_lio_yaw = yawFromRot(state.rot_end);
+    const double c_expected = std::cos(corrected_lio_yaw);
+    const double s_expected = std::sin(corrected_lio_yaw);
+    const V3D expected_velocity(
+        c_expected * sample.body_velocity.x() -
+            s_expected * sample.body_velocity.y(),
+        s_expected * sample.body_velocity.x() +
+            c_expected * sample.body_velocity.y(),
+        state.vel_end.z());
+    state.vel_end.x() =
+        (1.0 - planar_odom_velocity_gain) * state.vel_end.x() +
+        planar_odom_velocity_gain * expected_velocity.x();
+    state.vel_end.y() =
+        (1.0 - planar_odom_velocity_gain) * state.vel_end.y() +
+        planar_odom_velocity_gain * expected_velocity.y();
+
+    ++planar_odom_correction_count;
+    if (planar_odom_correction_count % 20 == 1) {
+        RCLCPP_INFO(
+            rclcpp::get_logger("laserMapping"),
+            "PLANAR_ODOM_PRIOR corrections=%lu residual=%.3fm "
+            "max_residual=%.3fm yaw_residual=%.2fdeg",
+            static_cast<unsigned long>(planar_odom_correction_count),
+            residual_norm,
+            planar_odom_max_residual_seen,
+            yaw_residual * 57.295779513);
+    }
+    return position_correction.head<2>().squaredNorm() > 0.0 ||
+           std::fabs(yaw_correction) > 1.0e-6;
+}
+
 static inline void projectExtrinsicSE2(M3D& R, V3D& t) {
     const double yaw = yawFromRot(R);
     R = rotZ(yaw);
@@ -545,7 +825,7 @@ void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::ConstSharedPtr msg) {
     }
     last_timestamp_lidar = rclcpp::Time(msg->header.stamp).seconds();
 
-    if ((lidar_type == VELO || lidar_type == OUSTER || lidar_type == PANDAR) && cut_frame_en) {
+    if ((lidar_type == VELO || lidar_type == OUSTER || lidar_type == PANDAR || lidar_type == UNILIDAR) && cut_frame_en) {
         deque<PointCloudXYZI::Ptr> ptr;
         deque<double> timestamp_lidar;
         p_pre->process_cut_frame_pcl2(msg, ptr, timestamp_lidar, cut_frame_num, scan_count);
@@ -727,12 +1007,12 @@ void publish_frame_world(const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>:
         lidar_to_world.block<3, 1>(0, 3) = state.rot_end * offset_T_L_I + state.pos_end;
         Matrix4d lidar_to_gravity = G_T_I0 * lidar_to_world;
         make_pcl_unorganized(*laserCloudFullRes);        
-        pcl::transformPointCloud(*laserCloudFullRes, *laserCloudWorld, lidar_to_gravity);
+        safeTransform(*laserCloudFullRes, *laserCloudWorld, lidar_to_gravity);
 
 
         //Convert all original points into gravity-aligned world frame
         make_pcl_unorganized(*feats_down_lidar);
-        pcl::transformPointCloud(*feats_down_lidar, *laserCloudWorldSparse, lidar_to_gravity);
+        safeTransform(*feats_down_lidar, *laserCloudWorldSparse, lidar_to_gravity);
 
 
         sensor_msgs::msg::PointCloud2 laserCloudmsg;
@@ -762,7 +1042,7 @@ void publish_frame_world(const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>:
         lidar_to_world.block<3, 1>(0, 3) = state.rot_end * offset_T_L_I + state.pos_end;
         Matrix4d body_to_gravity = G_T_I0 * lidar_to_world;
         make_pcl_unorganized(*feats_down_lidar);
-        pcl::transformPointCloud(*feats_down_lidar, *laserCloudWorld, body_to_gravity);
+        safeTransform(*feats_down_lidar, *laserCloudWorld, body_to_gravity);
 
         *pcl_wait_save += *laserCloudWorld;
         static int scan_wait_num = 0;
@@ -803,7 +1083,7 @@ void publish_frame_body(const rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::
     lidar_to_body.block<3,3>(0,0) = offset_R_L_I;
     lidar_to_body.block<3,1>(0,3) = offset_T_L_I;
     make_pcl_unorganized(*feats_undistort_lidar);
-    pcl::transformPointCloud(*feats_undistort_lidar, *laserCloudFullResBody, lidar_to_body);
+    safeTransform(*feats_undistort_lidar, *laserCloudFullResBody, lidar_to_body);
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
     pcl::toROSMsg(*laserCloudFullResBody, laserCloudmsg);
     laserCloudmsg.header.stamp = stamp_from_sec(lidar_end_time);
@@ -913,7 +1193,13 @@ void point_filter_teammate(const PointCloudXYZI &orig_pcl, PointCloudXYZI &pcl_o
         V3D pt(orig_pcl.points[i].x, orig_pcl.points[i].y, orig_pcl.points[i].z);
         pt = offset_R_L_I * pt + offset_T_L_I; //lidar_to_body
         bool is_dynamic = false;
-        for (auto iter = swarm_in->teammate_tracker.begin(); iter != swarm_in->teammate_tracker.end(); ++iter) {
+        // High-reflectivity (laser_retro) returns are teammate/self drone bodies,
+        // never the static environment (walls have retro 0, teammates 5000). Drop
+        // them from the map directly — this needs no tracker convergence and so
+        // catches the early fan-out, when trackers lag and ghosts got mapped.
+        if (orig_pcl.points[i].intensity > swarm_in->get_inten_threshold())
+            is_dynamic = true;
+        for (auto iter = swarm_in->teammate_tracker.begin(); is_dynamic == false && iter != swarm_in->teammate_tracker.end(); ++iter) {
             V3D dist = pt - state.rot_end.transpose() * (iter->second.get_state_pos() - state.pos_end);
             if (dist.norm() < 0.7) {
                 is_dynamic = true;
@@ -1312,27 +1598,88 @@ int main(int argc, char **argv) {
     extrinT                = node->declare_parameter<vector<double>>("mapping/LI_extrinsic_T", vector<double>());
     extrinR                = node->declare_parameter<vector<double>>("mapping/LI_extrinsic_R", vector<double>());
     sub_gt_pose_topic      = node->declare_parameter<string>("sub_gt_pose_topic", "");
+    bool ground_truth_logging_en = node->declare_parameter<bool>(
+        "evaluation/ground_truth_logging_en", false);
 
     actual_uav_num             = node->declare_parameter<int>("multiuav/actual_uav_num", 5);
     frame_num_in_sliding_window= node->declare_parameter<int>("multiuav/frame_num_in_sliding_window", original_frequency/10);
     mutual_observe_noise_      = node->declare_parameter<double>("multiuav/mutual_observe_noise", 0.001);
+    bool enable_mutual_observation_update = node->declare_parameter<bool>(
+        "multiuav/enable_mutual_observation_update", true);
+    bool stop_tracking_after_bootstrap = node->declare_parameter<bool>(
+        "multiuav/stop_tracking_after_bootstrap", false);
     degeneration_thresh        = node->declare_parameter<double>("multiuav/degeneration_thresh", 30.0);
     ground_height_threshold    = node->declare_parameter<double>("multiuav/ground_height_threshold", 0.0);
+    teammate_detection_delay   = node->declare_parameter<double>("multiuav/teammate_detection_delay", 15.0);
+    planar_odom_prior_en       = node->declare_parameter<bool>(
+        "mapping/planar_odom_prior_en", false);
+    planar_odom_topic          = node->declare_parameter<string>(
+        "mapping/planar_odom_topic", "");
+    planar_odom_position_gain  = node->declare_parameter<double>(
+        "mapping/planar_odom_position_gain", 0.50);
+    planar_odom_velocity_gain  = node->declare_parameter<double>(
+        "mapping/planar_odom_velocity_gain", 0.0);
+    planar_odom_yaw_gain       = node->declare_parameter<double>(
+        "mapping/planar_odom_yaw_gain", 0.0);
+    planar_odom_position_deadband = node->declare_parameter<double>(
+        "mapping/planar_odom_position_deadband", 0.60);
+    planar_odom_max_position_correction = node->declare_parameter<double>(
+        "mapping/planar_odom_max_position_correction", 0.10);
+    planar_odom_max_yaw_correction = node->declare_parameter<double>(
+        "mapping/planar_odom_max_yaw_correction", 0.035);
+    planar_odom_max_age        = node->declare_parameter<double>(
+        "mapping/planar_odom_max_age", 0.30);
+    planar_odom_window_duration = node->declare_parameter<double>(
+        "mapping/planar_odom_window_duration", 5.0);
+    planar_odom_release_residual = node->declare_parameter<double>(
+        "mapping/planar_odom_release_residual", 0.08);
+    planar_odom_yaw_consistency_gate = node->declare_parameter<double>(
+        "mapping/planar_odom_yaw_consistency_gate", 0.175);
     imu_prop_enable            = node->declare_parameter<bool>("imu_propagate/enable", false);
     imu_prop_topic             = node->declare_parameter<string>("imu_propagate/topic", "lidar_slam/imu_propagate");
     filter_acc_en              = node->declare_parameter<bool>("imu_propagate/filter_acc_en", false);
 
     // --- Mutual-observe constraints / robustification ---
-    bool   mo_force_extrinsic_se2      = node->declare_parameter<bool>("multiuav/mo_force_extrinsic_se2", true);
-    double mo_prior_rp_deg             = node->declare_parameter<double>("multiuav/mo_prior_rollpitch_deg", 2.0);
-    double mo_prior_z_m                = node->declare_parameter<double>("multiuav/mo_prior_z_m", 0.05);
+    string cross_world_transform_mode  = node->declare_parameter<string>(
+        "multiuav/cross_world_transform_mode", "se3");
+    bool legacy_se2_extrinsics =
+        cross_world_transform_mode == "se2" ||
+        cross_world_transform_mode == "se2_legacy";
+    if (!legacy_se2_extrinsics && cross_world_transform_mode != "se3") {
+        RCLCPP_WARN(node->get_logger(),
+                    "Unknown cross_world_transform_mode='%s'; using 'se3'",
+                    cross_world_transform_mode.c_str());
+        cross_world_transform_mode = "se3";
+        node->set_parameter(rclcpp::Parameter(
+            "multiuav/cross_world_transform_mode",
+            cross_world_transform_mode));
+    }
 
-    bool   mo_ignore_z_meas            = node->declare_parameter<bool>("multiuav/mo_ignore_z_meas", true);
+    bool   mo_force_extrinsic_se2      = node->declare_parameter<bool>(
+        "multiuav/mo_force_extrinsic_se2", legacy_se2_extrinsics);
+    double mo_prior_rp_deg             = node->declare_parameter<double>(
+        "multiuav/mo_prior_rollpitch_deg",
+        legacy_se2_extrinsics ? 2.0 : 0.0);
+    double mo_prior_z_m                = node->declare_parameter<double>(
+        "multiuav/mo_prior_z_m",
+        legacy_se2_extrinsics ? 0.05 : 0.0);
+
+    bool   mo_ignore_z_meas            = node->declare_parameter<bool>(
+        "multiuav/mo_ignore_z_meas", legacy_se2_extrinsics);
     double mo_z_noise_scale            = node->declare_parameter<double>("multiuav/mo_z_noise_scale", 100.0);
 
     double mo_gate_residual_norm       = node->declare_parameter<double>("multiuav/mo_gate_residual_norm", 1.0);
-    double mo_gate_residual_z          = node->declare_parameter<double>("multiuav/mo_gate_residual_z", 0.25);
+    double mo_gate_residual_z          = node->declare_parameter<double>(
+        "multiuav/mo_gate_residual_z",
+        legacy_se2_extrinsics ? 0.25 : -1.0);
     double mo_gate_rollpitch_deg       = node->declare_parameter<double>("multiuav/mo_gate_rollpitch_deg", 15.0);
+    RCLCPP_INFO(node->get_logger(),
+                "Cross-world transform mode=%s, force_se2=%s, ignore_z=%s, "
+                "mutual_observation_update=%s",
+                cross_world_transform_mode.c_str(),
+                mo_force_extrinsic_se2 ? "true" : "false",
+                mo_ignore_z_meas ? "true" : "false",
+                enable_mutual_observation_update ? "true" : "false");
 
     //Automatically Acquire IP
 //    string local_ip;
@@ -1430,7 +1777,34 @@ int main(int argc, char **argv) {
 
     auto sub_imu = node->create_subscription<sensor_msgs::msg::Imu>(
             imu_topic, rclcpp::SensorDataQoS(), imu_cbk);
-
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr
+        planar_odom_subscriber;
+    if (planar_odom_prior_en) {
+        if (planar_odom_topic.empty()) {
+            throw std::runtime_error(
+                "mapping/planar_odom_topic is required when "
+                "mapping/planar_odom_prior_en=true");
+        }
+        planar_odom_subscriber =
+            node->create_subscription<nav_msgs::msg::Odometry>(
+                planar_odom_topic,
+                rclcpp::SensorDataQoS(),
+                planar_odom_cbk);
+        RCLCPP_INFO(
+            node->get_logger(),
+            "Planar wheel/leg odometry fault detector enabled: topic=%s "
+            "window=%.1fs trigger=%.2fm position_gain=%.2f",
+            planar_odom_topic.c_str(),
+            planar_odom_window_duration,
+            planar_odom_position_deadband,
+            planar_odom_position_gain);
+    }
+    auto bootstrap_qos = rclcpp::QoS(1).reliable().transient_local();
+    auto sub_bootstrap_complete = node->create_subscription<std_msgs::msg::Bool>(
+            "/racer/bootstrap_complete", bootstrap_qos,
+            [](const std_msgs::msg::Bool::ConstSharedPtr message) {
+                racer_bootstrap_complete.store(message->data);
+            });
     auto pubCloudRegistered = node->create_publisher<sensor_msgs::msg::PointCloud2>(
             "/" + topic_name_prefix + "cloud_registered", rclcpp::SystemDefaultsQoS());
     auto pubCloudRegisteredSparse = node->create_publisher<sensor_msgs::msg::PointCloud2>(
@@ -1476,13 +1850,28 @@ int main(int argc, char **argv) {
     if(lidar_type == SIM){
         text_scale = 0.5;
         mesh_scale = 1.2;
-        groundtruth_subscriber = node->create_subscription<nav_msgs::msg::Odometry>(
-                sub_gt_pose_topic, rclcpp::SystemDefaultsQoS(), gt_pos_cbk_sim);
     }else{
         text_scale = 0.3;
         mesh_scale = 0.8;
-        groundtruth_subscriber = node->create_subscription<geometry_msgs::msg::PoseStamped>(
-                sub_gt_pose_topic, rclcpp::SystemDefaultsQoS(), gt_pos_cbk_real);
+    }
+    if (ground_truth_logging_en) {
+        if (sub_gt_pose_topic.empty()) {
+            throw std::runtime_error(
+                "sub_gt_pose_topic is required when ground-truth logging is enabled");
+        }
+        if (lidar_type == SIM) {
+            groundtruth_subscriber = node->create_subscription<nav_msgs::msg::Odometry>(
+                    sub_gt_pose_topic, rclcpp::SystemDefaultsQoS(), gt_pos_cbk_sim);
+        } else {
+            groundtruth_subscriber = node->create_subscription<geometry_msgs::msg::PoseStamped>(
+                    sub_gt_pose_topic, rclcpp::SystemDefaultsQoS(), gt_pos_cbk_real);
+        }
+        RCLCPP_WARN(node->get_logger(),
+                    "Estimator-side ground-truth logging enabled on %s",
+                    sub_gt_pose_topic.c_str());
+    } else {
+        RCLCPP_INFO(node->get_logger(),
+                    "Estimator-side ground-truth subscription disabled");
     }
     ground_truth.clear();
 
@@ -1512,8 +1901,10 @@ int main(int argc, char **argv) {
             double start_time = node->now().seconds();
             TimeConsuming time_all("Total time per scan");
             print_log = false;
-            // print log 10 times per second
-            if(frame_num % (original_frequency / 10) == 0){
+            // A six-UAV simulation otherwise emits several thousand lines per
+            // second and blocks both LIO and RACER on container log I/O.
+            // Retain one complete diagnostic sample per second.
+            if(frame_num % original_frequency == 0){
                 print_log = true;
                 cout << endl << endl << endl << CYAN << " -- [NEW SCAN " << frame_num << ", Drone ID " << drone_id << "]" << RESET << endl;
             }
@@ -1587,49 +1978,87 @@ int main(int argc, char **argv) {
             //Delete Reconnected UAV (of which the swarm start time changed)
             swarm->ResetReconnectedGlobalExtrinsic(state, lidar_end_time);
 
+            // --- Teammate-detection warm-up gate ---------------------------
+            // Run pure local LIO for the first `teammate_detection_delay` s so
+            // each drone has a converged state estimate + trajectory history
+            // before it starts detecting / identifying teammates. This avoids
+            // the cold-start degeneracy that SIGFPE-crashes the detector, and
+            // matches the algorithm's own need for trajectory history to do
+            // trajectory-matching identification at all.
+            bool teammate_detection_active =
+                (first_lidar_time > 0.0) &&
+                ((lidar_end_time - first_lidar_time) > teammate_detection_delay) &&
+                !(stop_tracking_after_bootstrap &&
+                  racer_bootstrap_complete.load());
+            static bool post_bootstrap_stop_logged = false;
+            if (stop_tracking_after_bootstrap &&
+                racer_bootstrap_complete.load() &&
+                !post_bootstrap_stop_logged) {
+                RCLCPP_INFO(
+                    node->get_logger(),
+                    "RACER bootstrap complete: stopped teammate clustering/"
+                    "tracking; local LIO and latched global extrinsics continue");
+                post_bootstrap_stop_logged = true;
+            }
+
             //Update Factor Graph
-            swarm->UpdateFactorGraph(print_log);
-            swarm->UpdateGlobalExtrinsicAndCreateNewTeammateTracker(state, lidar_end_time);
+            if (teammate_detection_active) {
+                swarm->UpdateFactorGraph(print_log);
+                swarm->UpdateGlobalExtrinsicAndCreateNewTeammateTracker(state, lidar_end_time);
+            }
             swarm->state = state;
             state_propagat = state;
 
-            PointCloudXYZI::Ptr feats_merged_body(new PointCloudXYZI());
-            //Transform last several frames to current body frame
-            if(feats_world_sliding_window.size() >= frame_num_in_sliding_window)
-                feats_world_sliding_window.pop_front();
-
-            PointCloudXYZI::Ptr feats_world_temp(new PointCloudXYZI());
             Matrix4d lidar_to_world = Matrix4d::Identity();
-            lidar_to_world.block<3, 3>(0, 0) = state_propagat.rot_end * offset_R_L_I;
-            lidar_to_world.block<3, 1>(0, 3) = state_propagat.rot_end * offset_T_L_I + state_propagat.pos_end;
-            make_pcl_unorganized(*feats_undistort_orig_lidar);
-            pcl::transformPointCloud(*feats_undistort_orig_lidar, *feats_world_temp, lidar_to_world);
+            lidar_to_world.block<3, 3>(0, 0) =
+                state_propagat.rot_end * offset_R_L_I;
+            lidar_to_world.block<3, 1>(0, 3) =
+                state_propagat.rot_end * offset_T_L_I +
+                state_propagat.pos_end;
+            PointCloudXYZI::Ptr feats_merged_body(new PointCloudXYZI());
+            if (teammate_detection_active) {
+                // Build the sliding-window cloud only while teammate detection
+                // needs it. After RACER latches the common frame this work is
+                // pure overhead and can starve six independent local LIOs.
+                if(feats_world_sliding_window.size() >= frame_num_in_sliding_window)
+                    feats_world_sliding_window.pop_front();
 
-            // filter ground points: feats_world_temp
-            PointCloudXYZI::Ptr feats_world_temp_filtered(new PointCloudXYZI());
-            for (const auto& pt : feats_world_temp->points) {
-                if (pt.z >= ground_height_threshold) {
-                    feats_world_temp_filtered->points.push_back(pt);
+                PointCloudXYZI::Ptr feats_world_temp(new PointCloudXYZI());
+                if (!feats_undistort_orig_lidar->points.empty()) {
+                    make_pcl_unorganized(*feats_undistort_orig_lidar);
+                    pcl::transformPointCloud(*feats_undistort_orig_lidar, *feats_world_temp, lidar_to_world);
+                }
+
+                PointCloudXYZI::Ptr feats_world_temp_filtered(new PointCloudXYZI());
+                for (const auto& pt : feats_world_temp->points) {
+                    if (pt.z >= ground_height_threshold) {
+                        feats_world_temp_filtered->points.push_back(pt);
+                    }
+                }
+                feats_world_sliding_window.push_back(feats_world_temp_filtered);
+
+                PointCloudXYZI::Ptr feats_all_in_window(new PointCloudXYZI());
+                for (int i = 0; i < feats_world_sliding_window.size(); ++i) {
+                    *feats_all_in_window += *feats_world_sliding_window[i];
+                }
+
+                Matrix4d world_to_body = Matrix4d::Identity();
+                world_to_body.block<3, 3>(0, 0) = state_propagat.rot_end.transpose();
+                world_to_body.block<3, 1>(0, 3) = - state_propagat.rot_end.transpose() * state_propagat.pos_end;
+                if (!feats_all_in_window->points.empty()) {
+                    make_pcl_unorganized(*feats_all_in_window);
+                    pcl::transformPointCloud(*feats_all_in_window, *feats_merged_body, world_to_body);
                 }
             }
 
-            feats_world_sliding_window.push_back(feats_world_temp_filtered);
 
-            PointCloudXYZI::Ptr feats_all_in_window(new PointCloudXYZI());
-            for (int i = 0; i < feats_world_sliding_window.size(); ++i) {
-                *feats_all_in_window += *feats_world_sliding_window[i];
-            }
-
-            Matrix4d world_to_body = Matrix4d::Identity();
-            world_to_body.block<3, 3>(0, 0) = state_propagat.rot_end.transpose();
-            world_to_body.block<3, 1>(0, 3) = - state_propagat.rot_end.transpose() * state_propagat.pos_end;
-            make_pcl_unorganized(*feats_all_in_window);
-            pcl::transformPointCloud(*feats_all_in_window, *feats_merged_body, world_to_body);
-
-
+            double cluster_time1 = 0.0, cluster_time2 = 0.0, tracking_time = 0.0;
+            if (teammate_detection_active) {
             //Predict Temporary Tracker
-            std::cout << "[DEBUG] Step: Predicting temporary trackers, current temp_tracker size = "
-                      << swarm->temp_tracker.size() << std::endl;
+            if (print_log) {
+                std::cout << "[DEBUG] Step: Predicting temporary trackers, current temp_tracker size = "
+                          << swarm->temp_tracker.size() << std::endl;
+            }
             for (int i = 0; i < swarm->temp_tracker.size(); ++i) {
                 swarm->PredictTemporaryTracker(lidar_end_time, i);
             }
@@ -1653,16 +2082,20 @@ int main(int argc, char **argv) {
             //Cluster Extraction
             TimeConsuming time_cluster1("Clustering1");
             swarm->ClusterExtractPredictRegion(lidar_end_time, feats_merged_body);
-            double cluster_time1 = time_cluster1.stop() * 1000;
-            std::cout << "[DEBUG] Step: ClusterExtractPredictRegion done, time_ms = "
-                      << cluster_time1 << std::endl;
+            cluster_time1 = time_cluster1.stop() * 1000;
+            if (print_log) {
+                std::cout << "[DEBUG] Step: ClusterExtractPredictRegion done, time_ms = "
+                          << cluster_time1 << std::endl;
+            }
 
             //Detect and segment highly-reflective points
             TimeConsuming time_cluster2("Clustering2");
             swarm->ClusterExtractHighIntensity(lidar_end_time, feats_merged_body);
-            double cluster_time2 = time_cluster2.stop() * 1000;
-            std::cout << "[DEBUG] Step: ClusterExtractHighIntensity done, time_ms = "
-                      << cluster_time2 << std::endl;
+            cluster_time2 = time_cluster2.stop() * 1000;
+            if (print_log) {
+                std::cout << "[DEBUG] Step: ClusterExtractHighIntensity done, time_ms = "
+                          << cluster_time2 << std::endl;
+            }
 
             //Update Teammate Tracker
             TimeConsuming time_tracking("Tracking");
@@ -1720,7 +2153,9 @@ int main(int argc, char **argv) {
 
                 //Try Trajectory Matching and Create New Teammate Tracker
                 bool find_new_teammate = false;
-                if (swarm->temp_tracker[i].dyn_pos_time.size() >= 0.1 * swarm->pos_num_in_traj)
+                if (swarm->temp_tracker[i].dyn_pos_time.size() >=
+                    swarm->traj_matching_min_sample_fraction *
+                        swarm->pos_num_in_traj)
                     find_new_teammate = swarm->CreateTeammateTracker(lidar_end_time, i, state, state_propagat, print_log);
 
                 if (find_new_teammate)
@@ -1732,12 +2167,15 @@ int main(int argc, char **argv) {
 
             //If there is NEW highly reflective object
             swarm->CreateTempTrackerByHighIntensity(lidar_end_time);
-            std::cout << "[DEBUG] Step: High-intensity temporary trackers count = "
-                      << swarm->temp_tracker.size() << std::endl;
+            if (print_log) {
+                std::cout << "[DEBUG] Step: High-intensity temporary trackers count = "
+                          << swarm->temp_tracker.size() << std::endl;
+            }
 
             //Visualize Temporary Tracker
             swarm->VisualizeTempTracker(lidar_end_time);
-            double tracking_time = time_tracking.stop() * 1000;
+            tracking_time = time_tracking.stop() * 1000;
+            } // end if (teammate_detection_active) — warm-up gate
 
 
 
@@ -1768,7 +2206,7 @@ int main(int argc, char **argv) {
                     ikdtree.set_downsample_param(filter_size_map_min);
                     feats_down_world->resize(feats_down_size);
                     make_pcl_unorganized(*feats_undistort_lidar);
-                    pcl::transformPointCloud(*feats_undistort_lidar, *feats_down_world, lidar_to_world);
+                    safeTransform(*feats_undistort_lidar, *feats_down_world, lidar_to_world);
                     ikdtree.Build(feats_down_world->points);
                 }
                 continue;
@@ -1797,22 +2235,30 @@ int main(int argc, char **argv) {
             teammateID_with_passive_observation.clear();
 
 
-            for (auto iter = swarm->teammates.begin(); iter != swarm->teammates.end(); ++iter){
-                int id = iter->first;
-                //If the teammate drone is degenerated, do not use the mutual observation with it
-                // && !iter->second.teammate_state.degenerated
-                if (swarm->IsDurationShort(lidar_end_time, iter->second, id)){
-                    bool active_observation_ = false;
-                    if (swarm->IsObserveTeammate(iter->second)) {
-                        active_observation_ = true;
-                        teammateID_with_active_observation.push_back(id);
-                        teammateID_with_observation.push_back(id);
-                    }
-
-                    if (swarm->IsObservedByTeammate(iter->second) && state.global_extrinsic_trans[id].norm() > 0.001){
-                        teammateID_with_passive_observation.push_back(id);
-                        if(!active_observation_)
+            // Trajectory matching and teammate tracking still run above even
+            // when this switch is false.  Only suppress the active/passive
+            // mutual-observation rows in the local ESIKF.  This lets RACER use
+            // the estimated full-SE(3) common frame without allowing one bad
+            // reflective-target association to corrupt an otherwise healthy
+            // per-UAV LiDAR-inertial odometry state.
+            if (enable_mutual_observation_update) {
+                for (auto iter = swarm->teammates.begin(); iter != swarm->teammates.end(); ++iter){
+                    int id = iter->first;
+                    //If the teammate drone is degenerated, do not use the mutual observation with it
+                    // && !iter->second.teammate_state.degenerated
+                    if (swarm->IsDurationShort(lidar_end_time, iter->second, id)){
+                        bool active_observation_ = false;
+                        if (swarm->IsObserveTeammate(iter->second)) {
+                            active_observation_ = true;
+                            teammateID_with_active_observation.push_back(id);
                             teammateID_with_observation.push_back(id);
+                        }
+
+                        if (swarm->IsObservedByTeammate(iter->second) && state.global_extrinsic_trans[id].norm() > 0.001){
+                            teammateID_with_passive_observation.push_back(id);
+                            if(!active_observation_)
+                                teammateID_with_observation.push_back(id);
+                        }
                     }
                 }
             }
@@ -2133,15 +2579,28 @@ int main(int argc, char **argv) {
                 I_mat.resize(NEW_DIM_STATE, NEW_DIM_STATE);
                 I_mat.setIdentity();
                 if (!degeneration_detected) {
-                    const double srp = mo_prior_rp_deg * M_PI / 180.0;
+                    const bool constrain_roll_pitch = mo_prior_rp_deg > 0.0;
+                    const bool constrain_z = mo_prior_z_m > 0.0;
+                    const double srp =
+                        constrain_roll_pitch
+                            ? mo_prior_rp_deg * M_PI / 180.0
+                            : 0.0;
                     const double var_rp = srp * srp;
-                    const double var_z  = mo_prior_z_m * mo_prior_z_m;
+                    const double var_z =
+                        constrain_z ? mo_prior_z_m * mo_prior_z_m : 0.0;
 
                     for (int i = 0; i < teammate_num_with_observation; ++i) {
                         const int base = 18 + i * 6;     // marginalized index
-                        state_cov(base + 0, base + 0) = std::min(state_cov(base + 0, base + 0), var_rp); // rot x ~ roll
-                        state_cov(base + 1, base + 1) = std::min(state_cov(base + 1, base + 1), var_rp); // rot y ~ pitch
-                        state_cov(base + 5, base + 5) = std::min(state_cov(base + 5, base + 5), var_z);  // trans z
+                        if (constrain_roll_pitch) {
+                            state_cov(base + 0, base + 0) =
+                                std::min(state_cov(base + 0, base + 0), var_rp); // rot x ~ roll
+                            state_cov(base + 1, base + 1) =
+                                std::min(state_cov(base + 1, base + 1), var_rp); // rot y ~ pitch
+                        }
+                        if (constrain_z) {
+                            state_cov(base + 5, base + 5) =
+                                std::min(state_cov(base + 5, base + 5), var_z);  // trans z
+                        }
                     }
                 }
 
@@ -2186,7 +2645,8 @@ int main(int argc, char **argv) {
                         const V3D e = RotMtoEuler(state.global_extrinsic_rot[id_dbg]) * 57.29577951308232;
                         const bool rp_bad = (std::abs(e.x()) > mo_gate_rollpitch_deg) || (std::abs(e.y()) > mo_gate_rollpitch_deg);
 
-                        if (mo_force_extrinsic_se2 || rp_bad) {
+                        if (mo_force_extrinsic_se2 ||
+                            (legacy_se2_extrinsics && rp_bad)) {
                             projectExtrinsicSE2(state.global_extrinsic_rot[id_dbg], state.global_extrinsic_trans[id_dbg]);
                         }
                     }
@@ -2252,6 +2712,19 @@ int main(int argc, char **argv) {
             }
             double ekf_consuming_time = time_ekf.stop();
 
+            // Ground robots can provide a bounded proprioceptive prior in the
+            // corridor direction that scan-to-map matching cannot observe
+            // reliably.  Apply it only after the LiDAR update so LIO remains
+            // the primary estimator, and before publication/map insertion so
+            // every downstream consumer sees one consistent pose.
+            if (apply_planar_odom_prior(lidar_end_time)) {
+                state_propagat = state;
+                swarm->state = state;
+                euler_cur = RotMtoEuler(state.rot_end);
+                geoQuat = createQuaternionMsgFromRollPitchYaw(
+                    euler_cur(0), euler_cur(1), euler_cur(2));
+                position_last = state.pos_end;
+            }
 
             //Update lastest_ekf_state
             ekf_finish_once = true;
@@ -2288,8 +2761,10 @@ int main(int argc, char **argv) {
 
             map_incremental();
             kdtree_size_end = ikdtree.size(); // number of points in the ikd-tree map
-            std::cout << "[DEBUG] Step: Map updated, ikd-tree size = "
-                      << kdtree_size_end << std::endl;
+            if (print_log) {
+                std::cout << "[DEBUG] Step: Map updated, ikd-tree size = "
+                          << kdtree_size_end << std::endl;
+            }
 
             
             /******* Publish points *******/

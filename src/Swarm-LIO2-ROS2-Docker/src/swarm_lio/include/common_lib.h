@@ -17,7 +17,7 @@
 
 using namespace std;
 using namespace Eigen;
-#define MAX_DRONE_ID (5) //集群中最大的飞机编号
+#define MAX_DRONE_ID (6) //集群中最大的飞机编号 (bumped 5->6: this sim uses drone ids 1..6; id=6 overflowed cov.block/global_extrinsic arrays -> SIGSEGV)
 
 // #define DEBUG_PRINT
 #define DEPLOY
@@ -55,7 +55,7 @@ typedef Vector3f V3F;
 // Vector3d Lidar_offset_to_IMU(0.05512, 0.02226, -0.0297); // Horizon
 // Vector3d Lidar_offset_to_IMU(0.04165, 0.02326, -0.0284); // Avia
 
-enum LID_TYPE{AVIA = 1, VELO, OUSTER, L515, PANDAR, SIM}; //{1, 2, 3, 4, 5, 6}
+enum LID_TYPE{AVIA = 1, VELO, OUSTER, L515, PANDAR, SIM, UNILIDAR}; //{1, 2, 3, 4, 5, 6, 7(Unitree L1/L2 via unilidar_sdk)}
 struct MeasureGroup     // Lidar data and imu dates for the current process
 {
     MeasureGroup()

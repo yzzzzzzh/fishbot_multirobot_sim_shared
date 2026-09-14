@@ -1,0 +1,15 @@
+{
+  "configById": {
+    "Tab!robots": {
+      "activeTabIdx": 0,
+      "tabs": []
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "linkedGlobalVariables": [],
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": "Tab!robots"
+}

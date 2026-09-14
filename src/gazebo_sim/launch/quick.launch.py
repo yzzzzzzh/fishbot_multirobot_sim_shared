@@ -15,6 +15,7 @@ def generate_launch_description() -> LaunchDescription:
 
     declare_args = [
         DeclareLaunchArgument('world', default_value=default_world),
+        DeclareLaunchArgument('headless', default_value='false'),
         DeclareLaunchArgument('world_name', default_value='default'),
         DeclareLaunchArgument('robot', default_value='fishbot_v2_3d'),
         DeclareLaunchArgument('count', default_value='3'),
@@ -22,6 +23,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('start_index', default_value='1'),
         DeclareLaunchArgument('x', default_value='0.0'),
         DeclareLaunchArgument('y', default_value='0.0'),
+        # Ground robots spawn at z=0; flying robots need a non-zero spawn height.
+        DeclareLaunchArgument('z', default_value='0.0'),
         DeclareLaunchArgument('pattern', default_value='matrix'),
         DeclareLaunchArgument('spacing', default_value='1'),
     ]
@@ -32,6 +35,7 @@ def generate_launch_description() -> LaunchDescription:
         ),
         launch_arguments={
             'world': LaunchConfiguration('world'),
+            'headless': LaunchConfiguration('headless'),
         }.items(),
     )
 
@@ -47,6 +51,7 @@ def generate_launch_description() -> LaunchDescription:
             'start_index': LaunchConfiguration('start_index'),
             'x': LaunchConfiguration('x'),
             'y': LaunchConfiguration('y'),
+            'z': LaunchConfiguration('z'),
             'pattern': LaunchConfiguration('pattern'),
             'spacing': LaunchConfiguration('spacing'),
         }.items(),

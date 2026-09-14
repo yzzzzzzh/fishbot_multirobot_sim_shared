@@ -1,0 +1,417 @@
+<?xml version="1.0"?>
+<!--
+  Quadrotor + 360-degree lidar + IMU, drop-in replacement for fishbot_v2_3d.
+
+  Same contract as the fishbot blueprints, so spawn_robots.launch.py drives it
+  with no special casing:
+    * args           : robot_namespace, config_file
+    * frames         : <ns>/base_link, <ns>/lidar_link, <ns>/imu_link
+    * subscribes     : /<ns>/cmd_vel            geometry_msgs/Twist (BODY frame)
+    * publishes      : /<ns>/imu, /<ns>/lidar_points/points
+
+  ONE EXTRA STEP vs a fishbot: the flight controller is disarmed at spawn.
+  Publish std_msgs/Bool true on /<ns>/enable once, or cmd_vel is ignored and
+  the rotors never spin.
+
+  cmd_vel semantics (from the plugin's own docs):
+    linear.{x,y,z} = velocity in the BODY frame  [m/s]. Holonomic, so
+                     linear.y is a real sideways command, unlike a diff-drive.
+    angular.z      = yaw rate [rad/s]; angular.{x,y} are ignored
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="quad_mid360">
+  <xacro:arg name="config_file" default="$(find gazebo_sim)/robots/quad_mid360/config/quad_mid360.yaml"/>
+  <xacro:arg name="robot_namespace" default=""/>
+
+  <!-- Load YAML config -->
+  <xacro:property name="robot_namespace" value="$(arg robot_namespace)"/>
+  <xacro:property name="config_file"    value="$(arg config_file)"/>
+  <xacro:property name="cfg"            value="${xacro.load_yaml(config_file)}"/>
+  <xacro:property name="robot_cfg"      value="${cfg['robot']}"/>
+  <xacro:property name="geometry_cfg"   value="${cfg['geometry']}"/>
+  <xacro:property name="mount_cfg"      value="${cfg['mount']}"/>
+  <xacro:property name="plugins_cfg"    value="${cfg['plugins']}"/>
+  <xacro:property name="imu_cfg"        value="${cfg['imu']}"/>
+  <xacro:property name="lidar_cfg"      value="${cfg['lidar']}"/>
+
+  <!-- Namespacing (identical scheme to fishbot_v2_3d) -->
+  <xacro:property name="ns"           value="${robot_namespace}"/>
+  <xacro:property name="frame_prefix" value="${ns + '/' if ns != '' else ''}"/>
+  <xacro:property name="topic_prefix" value="${'/' + ns if ns != '' else ''}"/>
+  <!-- Gazebo plugin namespace: plugins prepend '<robotNamespace>/' to their
+       topics, so this must NOT carry a leading slash. -->
+  <xacro:property name="gz_ns"        value="${ns if ns != '' else 'quad'}"/>
+
+  <!-- Frames -->
+  <xacro:property name="base_frame"  value="${robot_cfg['base_frame']}"/>
+  <xacro:property name="lidar_frame" value="${robot_cfg['lidar_frame']}"/>
+  <xacro:property name="imu_frame"   value="${robot_cfg['imu_frame']}"/>
+  <xacro:property name="base_frame_prefixed"  value="${frame_prefix + base_frame}"/>
+  <xacro:property name="lidar_frame_prefixed" value="${frame_prefix + lidar_frame}"/>
+  <xacro:property name="imu_frame_prefixed"   value="${frame_prefix + imu_frame}"/>
+
+  <!-- Topics -->
+  <xacro:property name="lidar_topic" value="${topic_prefix + '/' + robot_cfg['lidar_pub']}"/>
+  <xacro:property name="imu_topic"   value="${topic_prefix + '/' + robot_cfg['imu_pub']}"/>
+
+  <!-- Geometry -->
+  <xacro:property name="base_geom"  value="${geometry_cfg['base']}"/>
+  <xacro:property name="rotor_geom" value="${geometry_cfg['rotor']}"/>
+  <xacro:property name="arms"       value="${rotor_geom['arms']}"/>
+  <xacro:property name="sensor_mass"    value="${geometry_cfg['sensor_mass']}"/>
+  <xacro:property name="sensor_inertia" value="${geometry_cfg['sensor_inertia']}"/>
+  <xacro:property name="lidar_z" value="${mount_cfg['lidar_z']}"/>
+  <xacro:property name="imu_z"   value="${mount_cfg['imu_z']}"/>
+
+  <xacro:property name="motor_cfg" value="${plugins_cfg['motor']}"/>
+  <xacro:property name="vc_cfg"    value="${plugins_cfg['velocity_control']}"/>
+  <xacro:property name="laser_retro" value="${robot_cfg.get('laser_retro', 0.0)}"/>
+
+  <!-- ========================================================= -->
+  <!-- LINKS + JOINTS                                            -->
+  <!-- ========================================================= -->
+
+  <link name="${base_frame}">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${base_geom['size_x']} ${base_geom['size_y']} ${base_geom['size_z']}"/>
+      </geometry>
+      <material name="drone_body">
+        <color rgba="0.2 0.2 0.25 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${base_geom['size_x']} ${base_geom['size_y']} ${base_geom['size_z']}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${base_geom['mass']}"/>
+      <inertia ixx="${base_geom['inertia']['ixx']}" ixy="0" ixz="0"
+               iyy="${base_geom['inertia']['iyy']}" iyz="0"
+               izz="${base_geom['inertia']['izz']}"/>
+    </inertial>
+  </link>
+
+  <!-- Rotor macro: one link + one continuous joint the motor plugin drives.
+       Continuous (not revolute) so no joint limits are emitted, which is what
+       the X3 SDF's +/-1e16 limits amount to. -->
+  <xacro:macro name="rotor" params="name x y z">
+    <link name="${name}">
+      <visual>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder length="${rotor_geom['length']}" radius="${rotor_geom['radius']}"/>
+        </geometry>
+        <material name="rotor_blade">
+          <color rgba="0.1 0.3 0.9 1.0"/>
+        </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="0 0 0"/>
+        <geometry>
+          <cylinder length="${rotor_geom['length']}" radius="${rotor_geom['radius']}"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="${rotor_geom['mass']}"/>
+        <inertia ixx="${rotor_geom['inertia']['ixx']}" ixy="0" ixz="0"
+                 iyy="${rotor_geom['inertia']['iyy']}" iyz="0"
+                 izz="${rotor_geom['inertia']['izz']}"/>
+      </inertial>
+    </link>
+    <joint name="${name}_joint" type="continuous">
+      <parent link="${base_frame}"/>
+      <child link="${name}"/>
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+    </joint>
+    <gazebo reference="${name}">
+      <visual><laser_retro>${laser_retro}</laser_retro></visual>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:rotor name="${arms[0]['name']}" x="${arms[0]['x']}" y="${arms[0]['y']}" z="${arms[0]['z']}"/>
+  <xacro:rotor name="${arms[1]['name']}" x="${arms[1]['x']}" y="${arms[1]['y']}" z="${arms[1]['z']}"/>
+  <xacro:rotor name="${arms[2]['name']}" x="${arms[2]['x']}" y="${arms[2]['y']}" z="${arms[2]['z']}"/>
+  <xacro:rotor name="${arms[3]['name']}" x="${arms[3]['x']}" y="${arms[3]['y']}" z="${arms[3]['z']}"/>
+
+  <!-- Lidar -->
+  <link name="${lidar_frame}">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.02" radius="0.02"/>
+      </geometry>
+      <material name="lidar_black">
+        <color rgba="0.0 0.0 0.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.02" radius="0.02"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${sensor_mass}"/>
+      <inertia ixx="${sensor_inertia}" ixy="0" ixz="0" iyy="${sensor_inertia}" iyz="0" izz="${sensor_inertia}"/>
+    </inertial>
+  </link>
+  <joint name="lidar_joint" type="fixed">
+    <parent link="${base_frame}"/>
+    <child link="${lidar_frame}"/>
+    <origin xyz="0 0 ${lidar_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!--
+    Passive retro-reflective identification mast for Swarm-LIO2 teammate
+    tracking.  It has no collision geometry and therefore does not change the
+    vehicle's physical envelope.  Its vertical extent keeps several lidar
+    elevation rays on the target near the configured 10 m sensing limit; the
+    old thin body produced only intermittent single-ray returns at that range.
+  -->
+  <link name="retro_beacon_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.80" radius="0.10"/>
+      </geometry>
+      <material name="retro_beacon_orange">
+        <color rgba="1.0 0.45 0.05 1.0"/>
+      </material>
+    </visual>
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="0.000001" ixy="0" ixz="0"
+               iyy="0.000001" iyz="0" izz="0.000001"/>
+    </inertial>
+  </link>
+  <joint name="retro_beacon_joint" type="fixed">
+    <parent link="${base_frame}"/>
+    <child link="retro_beacon_link"/>
+    <origin xyz="0 0 0.55" rpy="0 0 0"/>
+  </joint>
+  <gazebo reference="retro_beacon_link">
+    <visual><laser_retro>${laser_retro}</laser_retro></visual>
+  </gazebo>
+
+  <!-- IMU. Height is pinned to lidar_z - 0.095 (see config comment). -->
+  <link name="${imu_frame}">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.02 0.02"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.02 0.02"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${sensor_mass}"/>
+      <inertia ixx="${sensor_inertia}" ixy="0" ixz="0" iyy="${sensor_inertia}" iyz="0" izz="${sensor_inertia}"/>
+    </inertial>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <parent link="${base_frame}"/>
+    <child link="${imu_frame}"/>
+    <origin xyz="0 0 ${imu_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ========================================================= -->
+  <!-- PROPULSION PLUGINS                                        -->
+  <!-- ========================================================= -->
+
+  <!-- One motor model per rotor. Each converts a commanded rotor speed (from
+       the velocity controller, on <gz_ns>/gazebo/command/motor_speed) into
+       thrust + drag torque on its link. -->
+  <xacro:macro name="motor" params="joint link turn number">
+    <gazebo>
+      <plugin filename="ignition-gazebo-multicopter-motor-model-system"
+              name="gz::sim::systems::MulticopterMotorModel">
+        <robotNamespace>${gz_ns}</robotNamespace>
+        <jointName>${joint}</jointName>
+        <linkName>${link}</linkName>
+        <turningDirection>${turn}</turningDirection>
+        <timeConstantUp>${motor_cfg['time_constant_up']}</timeConstantUp>
+        <timeConstantDown>${motor_cfg['time_constant_down']}</timeConstantDown>
+        <maxRotVelocity>${motor_cfg['max_rot_velocity']}</maxRotVelocity>
+        <motorConstant>${motor_cfg['motor_constant']}</motorConstant>
+        <momentConstant>${motor_cfg['moment_constant']}</momentConstant>
+        <commandSubTopic>gazebo/command/motor_speed</commandSubTopic>
+        <motorNumber>${number}</motorNumber>
+        <rotorDragCoefficient>${motor_cfg['rotor_drag_coefficient']}</rotorDragCoefficient>
+        <rollingMomentCoefficient>${motor_cfg['rolling_moment_coefficient']}</rollingMomentCoefficient>
+        <motorSpeedPubTopic>motor_speed/${number}</motorSpeedPubTopic>
+        <rotorVelocitySlowdownSim>${motor_cfg['rotor_velocity_slowdown_sim']}</rotorVelocitySlowdownSim>
+        <motorType>velocity</motorType>
+      </plugin>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:motor joint="${arms[0]['name']}_joint" link="${arms[0]['name']}" turn="${arms[0]['turn']}" number="0"/>
+  <xacro:motor joint="${arms[1]['name']}_joint" link="${arms[1]['name']}" turn="${arms[1]['turn']}" number="1"/>
+  <xacro:motor joint="${arms[2]['name']}_joint" link="${arms[2]['name']}" turn="${arms[2]['turn']}" number="2"/>
+  <xacro:motor joint="${arms[3]['name']}_joint" link="${arms[3]['name']}" turn="${arms[3]['turn']}" number="3"/>
+
+  <!-- Flight controller: body-frame velocity + yaw rate -> rotor speeds.
+       commandSubTopic is plain 'cmd_vel' so the resulting Gazebo topic is
+       /<ns>/cmd_vel, byte-identical to what the fishbot's DiffDrive listens
+       on. That is why spawn_robots.launch.py's existing bridge just works. -->
+  <gazebo>
+    <plugin filename="ignition-gazebo-multicopter-control-system"
+            name="gz::sim::systems::MulticopterVelocityControl">
+      <robotNamespace>${gz_ns}</robotNamespace>
+      <commandSubTopic>cmd_vel</commandSubTopic>
+      <enableSubTopic>enable</enableSubTopic>
+      <comLinkName>${base_frame}</comLinkName>
+      <velocityGain>${vc_cfg['velocity_gain']}</velocityGain>
+      <attitudeGain>${vc_cfg['attitude_gain']}</attitudeGain>
+      <angularRateGain>${vc_cfg['angular_rate_gain']}</angularRateGain>
+      <maximumLinearAcceleration>${vc_cfg['max_linear_accel']}</maximumLinearAcceleration>
+      <rotorConfiguration>
+        <rotor>
+          <jointName>${arms[0]['name']}_joint</jointName>
+          <forceConstant>${motor_cfg['motor_constant']}</forceConstant>
+          <momentConstant>${motor_cfg['moment_constant']}</momentConstant>
+          <direction>${arms[0]['spin']}</direction>
+        </rotor>
+        <rotor>
+          <jointName>${arms[1]['name']}_joint</jointName>
+          <forceConstant>${motor_cfg['motor_constant']}</forceConstant>
+          <momentConstant>${motor_cfg['moment_constant']}</momentConstant>
+          <direction>${arms[1]['spin']}</direction>
+        </rotor>
+        <rotor>
+          <jointName>${arms[2]['name']}_joint</jointName>
+          <forceConstant>${motor_cfg['motor_constant']}</forceConstant>
+          <momentConstant>${motor_cfg['moment_constant']}</momentConstant>
+          <direction>${arms[2]['spin']}</direction>
+        </rotor>
+        <rotor>
+          <jointName>${arms[3]['name']}_joint</jointName>
+          <forceConstant>${motor_cfg['motor_constant']}</forceConstant>
+          <momentConstant>${motor_cfg['moment_constant']}</momentConstant>
+          <direction>${arms[3]['spin']}</direction>
+        </rotor>
+      </rotorConfiguration>
+    </plugin>
+  </gazebo>
+
+  <!-- ========================================================= -->
+  <!-- SENSORS                                                   -->
+  <!-- ========================================================= -->
+
+  <gazebo reference="${base_frame}">
+    <visual><laser_retro>${laser_retro}</laser_retro></visual>
+  </gazebo>
+  <gazebo reference="${lidar_frame}">
+    <visual><laser_retro>${laser_retro}</laser_retro></visual>
+  </gazebo>
+
+  <gazebo reference="${imu_frame}">
+    <sensor name="imu_sensor" type="imu">
+      <always_on>true</always_on>
+      <update_rate>${imu_cfg['update_rate']}</update_rate>
+      <visualize>${'true' if imu_cfg['visualize'] else 'false'}</visualize>
+      <topic>${imu_topic}</topic>
+      <gz_frame_id>${imu_frame_prefixed}</gz_frame_id>
+      <enable_metrics>true</enable_metrics>
+      <imu>
+        <angular_velocity>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['ang_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['ang_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['ang_bias_stddev']}</bias_stddev>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['ang_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['ang_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['ang_bias_stddev']}</bias_stddev>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['ang_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['ang_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['ang_bias_stddev']}</bias_stddev>
+            </noise>
+          </z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['lin_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['lin_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['lin_bias_stddev']}</bias_stddev>
+            </noise>
+          </x>
+          <y>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['lin_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['lin_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['lin_bias_stddev']}</bias_stddev>
+            </noise>
+          </y>
+          <z>
+            <noise type="gaussian">
+              <mean>0.0</mean>
+              <stddev>${imu_cfg['noise']['lin_stddev']}</stddev>
+              <bias_mean>${imu_cfg['noise']['lin_bias_mean']}</bias_mean>
+              <bias_stddev>${imu_cfg['noise']['lin_bias_stddev']}</bias_stddev>
+            </noise>
+          </z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+  <gazebo reference="${lidar_frame}">
+    <sensor name="lidar_sensor" type="gpu_lidar">
+      <always_on>true</always_on>
+      <visualize>${'true' if lidar_cfg['visualize'] else 'false'}</visualize>
+      <update_rate>${lidar_cfg['update_rate']}</update_rate>
+      <topic>${lidar_topic}</topic>
+      <gz_frame_id>${lidar_frame_prefixed}</gz_frame_id>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>${lidar_cfg['h_rays']['samples']}</samples>
+            <resolution>${lidar_cfg['h_rays']['resolution']}</resolution>
+            <min_angle>${lidar_cfg['h_rays']['min_angle']}</min_angle>
+            <max_angle>${lidar_cfg['h_rays']['max_angle']}</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>${lidar_cfg['v_rays']['samples']}</samples>
+            <resolution>${lidar_cfg['v_rays']['resolution']}</resolution>
+            <min_angle>${lidar_cfg['v_rays']['min_angle']}</min_angle>
+            <max_angle>${lidar_cfg['v_rays']['max_angle']}</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>${lidar_cfg['range_min']}</min>
+          <max>${lidar_cfg['range_max']}</max>
+          <resolution>${lidar_cfg['range_res']}</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>${lidar_cfg['noise_stddev']}</stddev>
+        </noise>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+</robot>

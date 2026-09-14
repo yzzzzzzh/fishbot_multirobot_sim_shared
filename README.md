@@ -7,6 +7,11 @@ the planar adapter output and produces exploration trajectories.
 
 ## What is frozen here
 
+`src/` contains the source trees actually bind-mounted by the verified
+single-Go2 run.  It is kept alongside the small root-level compatibility
+mounts below so that `run_one_click_baseline.sh` does not need a sibling
+checkout.
+
 - `racer_integration/`: ROS 1/ROS 2 gateway, velocity controller, recorder,
   and video renderer.
 - `racer_adapter/`: ROS 2 frame adapter and the Go2 planar-map configuration.

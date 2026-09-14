@@ -6,6 +6,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -45,8 +46,19 @@ def generate_launch_description() -> LaunchDescription:
         spawn_nodes = []
         bridge_nodes = []
 
+        # 'custom' pattern: explicit per-robot poses from the SPAWN_POSES env var
+        # (JSON list of [x, y, z, yaw]). Used by the RACER-replay scenario, whose
+        # start positions are irregular and mid-air. Other patterns unaffected.
+        custom_poses = []
+        if pattern == 'custom':
+            import json as _json
+            custom_poses = _json.loads(os.environ.get('SPAWN_POSES', '[]'))
+
         def pose_for_index(idx: int) -> tuple[float, float, float, float]:
             """Compute spawn pose per index for the selected pattern."""
+            if pattern == 'custom':
+                p = custom_poses[idx]
+                return float(p[0]), float(p[1]), float(p[2]), float(p[3]) if len(p) > 3 else 0.0
             if pattern == 'circle':
                 angle = (2 * pi * idx / max(count, 1))
                 x = base_x + spacing * cos(angle)
@@ -77,12 +89,33 @@ def generate_launch_description() -> LaunchDescription:
         )
         bridge_nodes.append(tf_bridge)
 
+        # Test-only Gazebo ground truth for ATE/collision reporting.  The
+        # production controller does not subscribe to this topic; keeping it
+        # separate from /tf makes that boundary explicit.
+        pose_info_bridge = Node(
+            package='ros_gz_bridge',
+            executable='parameter_bridge',
+            name='racer_eval_gt_bridge',
+            output='log',
+            arguments=[
+                '/world/default/pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+            ],
+        )
+        bridge_nodes.append(pose_info_bridge)
+
         for i in range(count):
             name = f'{name_prefix}{start_index + i}'
             robot_description = Command([ 'xacro ', xacro_path,
                 ' robot_namespace:=', name,
                 ' config_file:=', config_path,
             ])
+            # For the *parameter*, value_type=str is required, not cosmetic:
+            # without it launch infers the type by YAML-parsing the URDF text,
+            # so any xacro whose output holds a comment with a "key: value"
+            # pattern dies with "Unable to parse the value of parameter
+            # robot_description as yaml". The `create` node below still takes
+            # the bare Command -- ParameterValue is not valid in `arguments`.
+            robot_description_param = ParameterValue(robot_description, value_type=str)
 
             rsp_nodes.append(
                 Node(
@@ -93,7 +126,7 @@ def generate_launch_description() -> LaunchDescription:
                     parameters=[{
                         'use_sim_time': True,
                         'frame_prefix': f'{name}/',
-                        'robot_description': robot_description,
+                        'robot_description': robot_description_param,
                     }],
                 )
             )
@@ -130,6 +163,10 @@ def generate_launch_description() -> LaunchDescription:
                         f'/{name}/wheel_odom@nav_msgs/msg/Odometry[gz.msgs.Odometry',
                         f'/{name}/imu@sensor_msgs/msg/Imu[gz.msgs.IMU',
                         f'/{name}/lidar_points/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked',
+                        # Arming line for flying robots: MulticopterVelocityControl
+                        # ignores cmd_vel until it receives `true` here. Ground
+                        # robots have no subscriber, so this bridge just idles.
+                        f'/{name}/enable@std_msgs/msg/Bool]gz.msgs.Boolean',
                     ],
                 )
             )
